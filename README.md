@@ -68,32 +68,34 @@ supabase/
   migrations/                 # SQL schema, seed data, RPC functions
 
 ## Game mechanics
-Round phases
-Phase	      Duration	What happens
-prompt	    5 s	      Prompt and sentence frame revealed to all players
-submitting	60 s	    Players fill in blanks with tiles; auto-advances when everyone submits
-voting	    30 s	    Anonymous submissions shown; players vote (not their own); auto-advances when everyone votes
-results	    10 s	    Authors revealed, vote counts shown, scores updated
+### Round phases
+| Phase	    |  Duration |	What happens |
+| --------- | --------- | ------------ |
+| prompt	  |    5 s	|      Prompt and sentence frame revealed to all players
+| submitting	|  60 s	 |   Players fill in blanks with tiles; auto-advances when everyone submits
+| voting	   |   30 s	 |   Anonymous submissions shown; players vote (not their own); auto-advances when everyone votes
+| results	  |  10 s	 |   Authors revealed, vote counts shown, scores updated
 
-Scoring
+### Scoring
 +1 point per vote received. Players who receive the most votes over all rounds win.
 
-Phase timer
+### Phase timer
 The host's browser fires the phase-advance API call when the timer expires (usePhaseTimer). All other clients wait for Supabase Realtime to push the updated round state. This avoids the need for a separate server-side cron or edge function.
 
-Word tiles
+### Word tiles
 293 tiles in the default set across five categories — each color-coded:
 
-Category	Color	  Examples
-Noun	    Blue	  flamingo, wizard, platypus
-Verb	    Green	  wrangling, impersonating, bedazzling
-Adjective	Amber	  unhinged, sentient, pungent
-Adverb	  Rose	  catastrophically, singlehandedly, theatrically
-Filler	  Purple	out of spite, in broad daylight, for clout
+| Category |	Color |	  Examples |
+| --- | --- | --- |
+| Noun	|    Blue	|  flamingo, wizard, platypus |
+| Verb	|    Green	|  wrangling, impersonating, bedazzling |
+| Adjective	| Amber	|  unhinged, sentient, pungent |
+| Adverb	|  Rose	|  catastrophically, singlehandedly, theatrically |
+| Filler	|  Purple	| out of spite, in broad daylight, for clout |
 
 Each player is dealt more tiles than there are blank slots (slots + 5), so there's always a meaningful choice.
 
-Prompts
+### Prompts
 65 prompts across 14 themes: Office Life, Food, Animals, Nature, Science, History, Politics, Dating, Sports, Movies, TV, School, Travel, Health, Crime, and Misc. Each round picks an unused prompt at random; if all prompts are exhausted the pool resets.
 
 ## Deployment
