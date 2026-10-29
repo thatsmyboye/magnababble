@@ -2,37 +2,33 @@
 
 import { useEffect, useRef } from "react";
 
+/** The host fires first; everyone else waits a little longer as a backup. */
+const HOST_GRACE_MS = 500;
+const BACKUP_GRACE_MS = 3_000;
+const BACKUP_JITTER_MS = 2_000;
+
 /**
- * Fires `onExpired` once when `phaseEndsAt` passes.
- * Only the host should act on this — others wait for Realtime updates.
+ * Fires `onExpired` once when `phaseEndsAt` passes. Every client runs this
+ * so the game keeps moving even if the host's tab is closed; the server
+ * compare-and-sets the transition, so duplicate calls are harmless.
  */
 export function usePhaseTimer(
-  phaseEndsAt: string | null,
+  phaseEndsAt: string | null | undefined,
   isHost: boolean,
   onExpired: () => void
 ) {
-  const calledRef = useRef(false);
+  const callback = useRef(onExpired);
+  callback.current = onExpired;
 
   useEffect(() => {
-    if (!phaseEndsAt || !isHost) return;
-    calledRef.current = false;
+    if (!phaseEndsAt) return;
 
-    const msUntilExpiry = new Date(phaseEndsAt).getTime() - Date.now();
-    if (msUntilExpiry <= 0) {
-      if (!calledRef.current) {
-        calledRef.current = true;
-        onExpired();
-      }
-      return;
-    }
+    const grace = isHost
+      ? HOST_GRACE_MS
+      : BACKUP_GRACE_MS + Math.random() * BACKUP_JITTER_MS;
+    const msUntilExpiry = new Date(phaseEndsAt).getTime() - Date.now() + grace;
 
-    const timeout = setTimeout(() => {
-      if (!calledRef.current) {
-        calledRef.current = true;
-        onExpired();
-      }
-    }, msUntilExpiry + 500); // +500ms grace to let server catch up
-
+    const timeout = setTimeout(() => callback.current(), Math.max(0, msUntilExpiry));
     return () => clearTimeout(timeout);
-  }, [phaseEndsAt, isHost]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [phaseEndsAt, isHost]);
 }

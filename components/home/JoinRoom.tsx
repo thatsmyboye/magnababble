@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { api } from "@/lib/api/client";
+import { storeCredentials } from "@/lib/hooks/useRoom";
+import { normalizeRoomCode, ROOM_CODE_LENGTH } from "@/lib/utils";
 
 export function JoinRoom() {
   const router = useRouter();
@@ -14,30 +17,18 @@ export function JoinRoom() {
 
   async function handleJoin(e: React.FormEvent) {
     e.preventDefault();
-    if (!code.trim() || !name.trim()) return;
+    const roomCode = normalizeRoomCode(code);
+    if (!roomCode || !name.trim()) return;
     setLoading(true);
     setError("");
 
-    const upperCode = code.trim().toUpperCase();
-
     try {
-      const res = await fetch(`/api/rooms/${upperCode}/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerName: name.trim() }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Failed to join room");
-      }
-
-      const { playerId, playerToken } = await res.json();
-
-      localStorage.setItem(`magnababble_token_${upperCode}`, playerToken);
-      localStorage.setItem(`magnababble_player_${upperCode}`, playerId);
-
-      router.push(`/room/${upperCode}`);
+      const { playerId, playerToken } = await api<{ playerId: string; playerToken: string }>(
+        `/api/rooms/${roomCode}/join`,
+        { body: { playerName: name.trim() } }
+      );
+      storeCredentials(roomCode, playerId, playerToken);
+      router.push(`/room/${roomCode}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setLoading(false);
@@ -49,10 +40,12 @@ export function JoinRoom() {
       <div>
         <label className="block text-sm text-white/60 mb-1">Room code</label>
         <Input
-          placeholder="e.g. KOALA"
+          placeholder="e.g. BXKT"
           value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
-          maxLength={10}
+          onChange={(e) => setCode(normalizeRoomCode(e.target.value))}
+          maxLength={ROOM_CODE_LENGTH + 2}
+          autoCapitalize="characters"
+          autoComplete="off"
           required
           className="uppercase tracking-widest font-bold text-lg"
         />
@@ -69,7 +62,7 @@ export function JoinRoom() {
       </div>
       {error && <p className="text-red-400 text-sm">{error}</p>}
       <Button type="submit" size="lg" variant="secondary" className="w-full" disabled={loading}>
-        {loading ? "Joining..." : "Join Game"}
+        {loading ? "Joining…" : "Join game"}
       </Button>
     </form>
   );

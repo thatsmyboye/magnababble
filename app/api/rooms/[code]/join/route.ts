@@ -1,13 +1,8 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { fetchRoomByCode, MAX_PLAYERS } from "@/lib/game/engine";
+import { getServiceClient } from "@/lib/supabase/service";
 import { generateToken } from "@/lib/utils";
-
-function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+import { cleanName, handleRouteError, jsonError, readJson } from "@/lib/api/helpers";
 
 export async function POST(
   request: Request,
@@ -16,56 +11,33 @@ export async function POST(
   const { code } = await params;
 
   try {
-    const { playerName } = await request.json();
+    const body = await readJson<{ playerName: string }>(request);
+    const playerName = cleanName(body.playerName);
+    if (!playerName) return jsonError("Player name is required");
 
-    if (!playerName?.trim()) {
-      return NextResponse.json({ error: "Player name is required" }, { status: 400 });
-    }
+    const sb = getServiceClient();
+    const room = await fetchRoomByCode(sb, code);
+    if (!room) return jsonError("Room not found", 404);
+    if (room.status !== "lobby") return jsonError("That game has already started");
 
-    const supabase = getServiceClient();
-
-    const { data: room, error: roomError } = await supabase
-      .from("rooms")
-      .select("id, status")
-      .eq("code", code.toUpperCase())
-      .single();
-
-    if (roomError || !room) {
-      return NextResponse.json({ error: "Room not found" }, { status: 404 });
-    }
-
-    if (room.status !== "lobby") {
-      return NextResponse.json({ error: "Game already started" }, { status: 400 });
-    }
-
-    // Check player count limit
-    const { count } = await supabase
+    const { count } = await sb
       .from("players")
       .select("id", { count: "exact", head: true })
       .eq("room_id", room.id);
-
-    if ((count ?? 0) >= 10) {
-      return NextResponse.json({ error: "Room is full (max 10 players)" }, { status: 400 });
+    if ((count ?? 0) >= MAX_PLAYERS) {
+      return jsonError(`Room is full (max ${MAX_PLAYERS} players)`);
     }
 
     const playerToken = generateToken();
-
-    const { data: player, error: playerError } = await supabase
+    const { data: player, error } = await sb
       .from("players")
-      .insert({
-        room_id: room.id,
-        name: playerName.trim(),
-        token: playerToken,
-        is_host: false,
-      })
-      .select()
+      .insert({ room_id: room.id, name: playerName, token: playerToken, is_host: false })
+      .select("id")
       .single();
+    if (error) throw error;
 
-    if (playerError) throw playerError;
-
-    return NextResponse.json({ playerId: player.id, playerToken });
+    return NextResponse.json({ code: room.code, playerId: player.id, playerToken });
   } catch (err) {
-    console.error("POST /api/rooms/[code]/join:", err);
-    return NextResponse.json({ error: "Failed to join room" }, { status: 500 });
+    return handleRouteError("POST /api/rooms/[code]/join", err);
   }
 }

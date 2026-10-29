@@ -1,57 +1,67 @@
 "use client";
 
 import { PlayerList } from "@/components/ui/player-list";
-import { Timer } from "@/components/ui/timer";
+import { PhaseHeader } from "@/components/ui/phase-header";
+import { Sentence } from "@/components/ui/sentence";
 import { cn } from "@/lib/utils";
-import type { Player, Round, Submission } from "@/lib/hooks/useRoom";
+import type { PlayerPublic, RoundPublic, SubmissionPublic } from "@/lib/game/types";
 
 interface ResultsPhaseProps {
-  round: Round;
+  round: RoundPublic;
   roundCount: number;
-  submissions: Submission[];
-  players: Player[];
+  submissions: SubmissionPublic[];
+  players: PlayerPublic[];
   myPlayerId: string;
 }
 
-export function ResultsPhase({
-  round,
-  roundCount,
-  submissions,
-  players,
-  myPlayerId,
-}: ResultsPhaseProps) {
+export function ResultsPhase({ round, roundCount, submissions, players, myPlayerId }: ResultsPhaseProps) {
   const playerMap = Object.fromEntries(players.map((p) => [p.id, p]));
   const sorted = [...submissions].sort((a, b) => b.vote_count - a.vote_count);
-  const winner = sorted[0];
+  const topVotes = sorted[0]?.vote_count ?? 0;
+  const winners = topVotes > 0 ? sorted.filter((s) => s.vote_count === topVotes) : [];
+  const isLastRound = round.round_number >= roundCount;
 
   return (
-    <div className="flex flex-col min-h-screen px-4 py-8 max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-4 text-white/40 text-sm">
-        <span>Round {round.round_number} of {roundCount} — Results</span>
-        <div className="flex items-center gap-1">
-          <span>Next round in:</span>
-          <Timer endsAt={round.phase_ends_at} />
-        </div>
-      </div>
+    <div className="flex flex-col min-h-screen px-4 py-6 max-w-2xl mx-auto">
+      <PhaseHeader
+        round={round}
+        roundCount={roundCount}
+        label="Results"
+        timerLabel={isLastRound ? "Final scores in" : "Next round in"}
+      />
 
-      <h2 className="text-2xl font-bold text-white mb-1">Results</h2>
-      <p className="text-white/50 text-sm mb-6">{round.prompts?.display_text}</p>
+      <h2 className="text-2xl font-bold text-white mb-1">
+        {winners.length > 1 ? "It's a tie!" : winners.length === 1 ? "Round winner" : "Results"}
+      </h2>
+      <p className="text-white/50 text-sm mb-6">{round.prompt.display_text}</p>
 
-      {winner && winner.vote_count > 0 && (
-        <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-2xl px-5 py-4 mb-6 text-center">
-          <p className="text-yellow-400 text-xs uppercase tracking-widest mb-1">Winner</p>
-          <p className="text-white text-xl font-bold mb-1">{winner.rendered_text}</p>
-          <p className="text-yellow-300 text-sm">
-            {winner.player_id ? playerMap[winner.player_id]?.name : "Anonymous"} · {winner.vote_count} vote{winner.vote_count !== 1 ? "s" : ""}
-          </p>
+      {winners.length > 0 && (
+        <div className="space-y-3 mb-6">
+          {winners.map((w) => (
+            <div
+              key={w.id}
+              className="bg-yellow-500/10 border border-yellow-500/30 rounded-2xl px-5 py-4 text-center"
+            >
+              <p className="text-white text-xl font-bold mb-1 leading-relaxed">
+                <Sentence text={w.rendered_text} tileClassName="bg-yellow-400/20 text-yellow-100" />
+              </p>
+              <p className="text-yellow-300 text-sm">
+                {w.player_id ? playerMap[w.player_id]?.name ?? "Unknown" : "Anonymous"} ·{" "}
+                {w.vote_count} {w.vote_count === 1 ? "vote" : "votes"}
+              </p>
+            </div>
+          ))}
         </div>
+      )}
+
+      {submissions.length === 0 && (
+        <p className="text-white/30 text-center py-8">Nobody submitted this round.</p>
       )}
 
       <div className="space-y-3 mb-8">
         {sorted.map((sub, i) => {
           const author = sub.player_id ? playerMap[sub.player_id] : null;
           const isOwn = sub.player_id === myPlayerId;
-
           return (
             <div
               key={sub.id}
@@ -63,7 +73,9 @@ export function ResultsPhase({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <span className="text-white/30 text-xs mr-2">{i + 1}.</span>
-                  <span className="text-white font-semibold">{sub.rendered_text}</span>
+                  <span className="text-white font-semibold leading-relaxed">
+                    <Sentence text={sub.rendered_text} />
+                  </span>
                 </div>
                 <span className="text-violet-300 font-bold shrink-0">
                   {sub.vote_count} {sub.vote_count === 1 ? "vote" : "votes"}

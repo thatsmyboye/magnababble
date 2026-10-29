@@ -1,55 +1,47 @@
 "use client";
 
-import { useState } from "react";
-import { Timer } from "@/components/ui/timer";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from "react";
+import { PhaseHeader } from "@/components/ui/phase-header";
+import { Sentence } from "@/components/ui/sentence";
+import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
-import type { Round, Submission } from "@/lib/hooks/useRoom";
+import type { RoundPublic, SubmissionPublic } from "@/lib/game/types";
 
 interface VotingPhaseProps {
-  code: string;
-  round: Round;
+  round: RoundPublic;
   roundCount: number;
-  submissions: Submission[];
-  myPlayerId: string;
-  mySubmissionId?: string;
+  submissions: SubmissionPublic[];
+  myVote: string | null;
+  playerCount: number;
+  token: string | null;
+  onVoted: () => void;
 }
 
 export function VotingPhase({
-  code,
   round,
   roundCount,
   submissions,
-  myPlayerId,
-  mySubmissionId,
+  myVote,
+  playerCount,
+  token,
+  onVoted,
 }: VotingPhaseProps) {
-  const [votedId, setVotedId] = useState<string | null>(null);
+  const [votedId, setVotedId] = useState<string | null>(myVote);
   const [voting, setVoting] = useState(false);
   const [error, setError] = useState("");
 
+  // Keep in sync if the server knows about a vote we made in another tab.
+  useEffect(() => {
+    if (myVote) setVotedId(myVote);
+  }, [myVote]);
+
   async function castVote(submissionId: string) {
-    if (submissionId === mySubmissionId) return;
     setVoting(true);
     setError("");
-
-    const playerToken = localStorage.getItem(`magnababble_token_${code}`);
-
     try {
-      const res = await fetch(`/api/rounds/${round.id}/vote`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${playerToken}`,
-        },
-        body: JSON.stringify({ submissionId }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Vote failed");
-      }
-
+      await api(`/api/rounds/${round.id}/vote`, { token, body: { submissionId } });
       setVotedId(submissionId);
+      onVoted();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Vote failed");
     } finally {
@@ -57,38 +49,30 @@ export function VotingPhase({
     }
   }
 
+  const others = submissions.filter((s) => !s.is_mine);
+
   return (
-    <div className="flex flex-col min-h-screen px-4 py-8 max-w-2xl mx-auto">
-      <div className="flex items-center justify-between mb-2 text-white/40 text-sm">
-        <span>Round {round.round_number} of {roundCount}</span>
-        <div className="flex items-center gap-1">
-          <span>Vote closes in:</span>
-          <Timer endsAt={round.phase_ends_at} />
-        </div>
-      </div>
+    <div className="flex flex-col min-h-screen px-4 py-6 max-w-2xl mx-auto">
+      <PhaseHeader round={round} roundCount={roundCount} timerLabel="Voting closes in" />
 
       <h2 className="text-2xl font-bold text-white mb-1">Vote for your favorite</h2>
-      <p className="text-white/50 text-sm mb-6">
-        {round.prompts?.display_text}
-      </p>
+      <p className="text-white/50 text-sm mb-6">{round.prompt.display_text}</p>
 
-      {submissions.length === 0 && (
-        <p className="text-white/30 text-center py-12">No submissions yet...</p>
+      {others.length === 0 && (
+        <p className="text-white/30 text-center py-12">Nothing to vote on this round.</p>
       )}
 
       <div className="space-y-3 mb-6">
-        {submissions.map((sub, i) => {
-          const isOwn = sub.player_id === myPlayerId || (!sub.player_id && mySubmissionId === sub.id);
+        {submissions.map((sub) => {
           const isVoted = votedId === sub.id;
-
           return (
             <button
               key={sub.id}
-              onClick={() => !isOwn && !voting && castVote(sub.id)}
-              disabled={isOwn || voting}
+              onClick={() => !sub.is_mine && !voting && castVote(sub.id)}
+              disabled={sub.is_mine || voting}
               className={cn(
                 "w-full text-left rounded-2xl px-5 py-4 border-2 transition-all",
-                isOwn
+                sub.is_mine
                   ? "bg-white/5 border-white/10 opacity-60 cursor-not-allowed"
                   : isVoted
                   ? "bg-violet-700 border-violet-400 shadow-lg shadow-violet-900/40"
@@ -96,29 +80,23 @@ export function VotingPhase({
               )}
             >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <span className="text-white/30 text-xs mr-2">{i + 1}.</span>
-                  <span className="text-white font-semibold">{sub.rendered_text}</span>
-                  {isOwn && (
-                    <span className="ml-2 text-xs text-white/30">(yours)</span>
-                  )}
-                </div>
-                {isVoted && (
-                  <span className="text-violet-300 text-sm font-bold shrink-0">Voted</span>
-                )}
+                <span className="text-white font-semibold text-lg leading-relaxed">
+                  <Sentence text={sub.rendered_text} />
+                  {sub.is_mine && <span className="ml-2 text-xs text-white/30 font-normal">(yours)</span>}
+                </span>
+                {isVoted && <span className="text-violet-200 text-sm font-bold shrink-0">Voted</span>}
               </div>
             </button>
           );
         })}
       </div>
 
-      {error && <p className="text-red-400 text-sm">{error}</p>}
+      {error && <p className="text-red-400 text-sm mb-3">{error}</p>}
 
-      {votedId && (
-        <p className="text-white/40 text-sm text-center">
-          Vote cast. You can change it until time runs out.
-        </p>
-      )}
+      <p className="text-white/40 text-sm text-center">
+        {votedId ? "Vote cast — you can change it until time runs out. " : ""}
+        {round.vote_count} of {playerCount} votes in
+      </p>
     </div>
   );
 }

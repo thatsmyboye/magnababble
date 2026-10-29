@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { renderSentence } from "@/lib/game/scoring";
-
-function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+import {
+  advanceIfAllSubmitted,
+  fetchPlayerByToken,
+  fetchRoundById,
+  type RoomRow,
+} from "@/lib/game/engine";
+import { placementUsesHand } from "@/lib/game/dealing";
+import { countSlots, FREESTYLE_MAX_WORDS, isFreestyle, renderSubmission } from "@/lib/game/scoring";
+import { getServiceClient } from "@/lib/supabase/service";
+import { bearerToken, handleRouteError, jsonError, readJson } from "@/lib/api/helpers";
 
 export async function POST(
   request: Request,
@@ -16,110 +17,71 @@ export async function POST(
   const { id: roundId } = await params;
 
   try {
-    const authHeader = request.headers.get("Authorization");
-    const playerToken = authHeader?.replace("Bearer ", "");
+    const token = bearerToken(request);
+    if (!token) return jsonError("Unauthorized", 401);
 
-    if (!playerToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body = await readJson<{ placement: unknown }>(request);
+    const placement = body.placement;
+    if (!Array.isArray(placement) || !placement.every((w) => typeof w === "string")) {
+      return jsonError("Invalid placement data");
     }
 
-    // Ordered list of tile words placed in slots
-    const { placement }: { placement: string[] } = await request.json();
+    const sb = getServiceClient();
 
-    if (!Array.isArray(placement)) {
-      return NextResponse.json({ error: "Invalid placement data" }, { status: 400 });
+    const round = await fetchRoundById(sb, roundId);
+    if (!round || !round.prompts) return jsonError("Round not found", 404);
+
+    const player = await fetchPlayerByToken(sb, round.room_id, token);
+    if (!player) return jsonError("Invalid player token", 401);
+
+    if (round.phase !== "submitting") return jsonError("Submissions are closed for this round");
+
+    const frame = round.prompts.sentence_frame;
+    const freestyle = isFreestyle(frame);
+    const words = (placement as string[]).map((w) => w.trim());
+
+    if (freestyle) {
+      if (words.length === 0) return jsonError("Place at least one tile");
+      if (words.length > FREESTYLE_MAX_WORDS) {
+        return jsonError(`Use at most ${FREESTYLE_MAX_WORDS} tiles`);
+      }
+    } else if (words.length !== countSlots(frame) || words.some((w) => !w)) {
+      return jsonError("Fill every blank before submitting");
     }
 
-    const supabase = getServiceClient();
+    // Only tiles from the player's dealt hand are allowed.
+    const { data: handRows } = await sb
+      .from("player_hands")
+      .select("tiles(word)")
+      .eq("round_id", round.id)
+      .eq("player_id", player.id);
+    const hand = ((handRows as { tiles: { word: string } | { word: string }[] | null }[] | null) ?? [])
+      .map((h) => (Array.isArray(h.tiles) ? h.tiles[0] : h.tiles))
+      .filter((t): t is { word: string } => Boolean(t));
 
-    // Validate player token
-    const { data: player, error: playerError } = await supabase
-      .from("players")
-      .select("id")
-      .eq("token", playerToken)
-      .single();
-
-    if (playerError || !player) {
-      return NextResponse.json({ error: "Invalid player token" }, { status: 401 });
+    if (!placementUsesHand(words, hand)) {
+      return jsonError("You can only use tiles from your hand");
     }
 
-    // Validate round is in submitting phase
-    const { data: round, error: roundError } = await supabase
-      .from("rounds")
-      .select("id, phase, prompts(sentence_frame)")
-      .eq("id", roundId)
-      .single();
+    const renderedText = renderSubmission(frame, words);
 
-    if (roundError || !round) {
-      return NextResponse.json({ error: "Round not found" }, { status: 404 });
-    }
-
-    if (round.phase !== "submitting") {
-      return NextResponse.json({ error: "Submission phase is not active" }, { status: 400 });
-    }
-
-    const promptData = round.prompts as unknown as { sentence_frame: string } | { sentence_frame: string }[] | null;
-    const frame = (Array.isArray(promptData) ? promptData[0] : promptData)?.sentence_frame ?? "";
-    const renderedText = renderSentence(frame, placement);
-
-    const { error: upsertError } = await supabase
+    const { error: upsertError } = await sb
       .from("submissions")
       .upsert(
-        {
-          round_id: roundId,
-          player_id: player.id,
-          placement,
-          rendered_text: renderedText,
-        },
+        { round_id: round.id, player_id: player.id, placement: words, rendered_text: renderedText },
         { onConflict: "round_id,player_id" }
       );
-
     if (upsertError) throw upsertError;
 
-    // Auto-advance if all players have submitted
-    const { count: playerCount } = await supabase
-      .from("players")
-      .select("id", { count: "exact", head: true })
-      .eq(
-        "room_id",
-        (
-          await supabase
-            .from("rounds")
-            .select("room_id")
-            .eq("id", roundId)
-            .single()
-        ).data?.room_id ?? ""
-      );
-
-    const { count: submissionCount } = await supabase
-      .from("submissions")
-      .select("id", { count: "exact", head: true })
-      .eq("round_id", roundId);
-
-    if ((submissionCount ?? 0) >= (playerCount ?? 0)) {
-      // Everyone has submitted — advance to voting
-      const { data: roundData } = await supabase
-        .from("rounds")
-        .select("rooms(code, host_token)")
-        .eq("id", roundId)
-        .single();
-
-      const roomRaw = roundData?.rooms as unknown as { code: string; host_token: string } | { code: string; host_token: string }[] | null;
-      const room = Array.isArray(roomRaw) ? roomRaw[0] : roomRaw;
-      if (room) {
-        await fetch(
-          `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/rooms/${room.code}/next`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${room.host_token}` },
-          }
-        );
-      }
-    }
+    const { data: roomRow } = await sb
+      .from("rooms")
+      .select("id, code, status, round_count, current_round, mode")
+      .eq("id", round.room_id)
+      .single();
+    if (roomRow) await advanceIfAllSubmitted(sb, roomRow as RoomRow, round.id);
 
     return NextResponse.json({ ok: true, renderedText });
   } catch (err) {
-    console.error("POST /api/rounds/[id]/submit:", err);
-    return NextResponse.json({ error: "Failed to submit" }, { status: 500 });
+    return handleRouteError("POST /api/rounds/[id]/submit", err);
   }
 }
