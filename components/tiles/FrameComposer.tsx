@@ -36,10 +36,11 @@ export function FrameComposer({ frame, hand, onSubmit, submitting, error }: Fram
   const [selectedTile, setSelectedTile] = useState<TileData | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [activeDrag, setActiveDrag] = useState<TileData | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } })
   );
 
   const placedTileIds = new Set(placements.filter(Boolean) as string[]);
@@ -59,6 +60,24 @@ export function FrameComposer({ frame, hand, onSubmit, submitting, error }: Fram
     });
     setSelectedTile(null);
     setSelectedSlot(null);
+    setAnnouncement(`Placed ${tileById(tileId)?.word ?? "tile"} in blank ${slotIndex + 1}`);
+  }
+
+  function clearSlot(slotIndex: number) {
+    const word = placements[slotIndex] ? tileById(placements[slotIndex]!)?.word : null;
+    setPlacements((prev) => {
+      const next = [...prev];
+      next[slotIndex] = null;
+      return next;
+    });
+    if (word) setAnnouncement(`Removed ${word} from blank ${slotIndex + 1}`);
+  }
+
+  function clearAll() {
+    setPlacements(Array(slotCount).fill(null));
+    setSelectedTile(null);
+    setSelectedSlot(null);
+    setAnnouncement("Cleared all blanks");
   }
 
   function handleDragEnd(event: DragEndEvent) {
@@ -74,23 +93,25 @@ export function FrameComposer({ frame, hand, onSubmit, submitting, error }: Fram
   function handleTileClick(tile: TileData) {
     if (selectedSlot !== null) {
       placeTile(tile.id, selectedSlot);
-    } else if (selectedTile?.id === tile.id) {
+      return;
+    }
+    if (selectedTile?.id === tile.id) {
       setSelectedTile(null);
+      return;
+    }
+    // With exactly one empty blank, fill it straight away.
+    const empties = placements.map((p, i) => (p ? -1 : i)).filter((i) => i >= 0);
+    if (empties.length === 1) {
+      placeTile(tile.id, empties[0]);
     } else {
       setSelectedTile(tile);
-      // Convenience: with exactly one empty slot, fill it straight away.
-      const empties = placements.map((p, i) => (p ? -1 : i)).filter((i) => i >= 0);
-      if (empties.length === 1) placeTile(tile.id, empties[0]);
+      setAnnouncement(`${tile.word} selected. Choose a blank.`);
     }
   }
 
   function handleSlotClick(slotIndex: number) {
     if (placements[slotIndex]) {
-      setPlacements((prev) => {
-        const next = [...prev];
-        next[slotIndex] = null;
-        return next;
-      });
+      clearSlot(slotIndex);
       return;
     }
     if (selectedTile) {
@@ -100,7 +121,7 @@ export function FrameComposer({ frame, hand, onSubmit, submitting, error }: Fram
     }
   }
 
-  const slotWords = placements.map((id) => (id ? tileById(id)?.word ?? null : null));
+  const slotTiles = placements.map((id) => (id ? tileById(id) ?? null : null));
   const filled = placements.filter(Boolean).length;
   const allFilled = filled === slotCount;
 
@@ -116,34 +137,56 @@ export function FrameComposer({ frame, hand, onSubmit, submitting, error }: Fram
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveDrag(null)}
     >
-      <div className="mb-6">
+      <div className="mb-3">
         <SentenceFrame
           frame={frame}
-          placements={slotWords}
+          placements={slotTiles}
           onSlotClick={handleSlotClick}
           selectedSlotIndex={selectedSlot}
         />
       </div>
 
-      <p className="mb-3 text-white/40 text-xs text-center">
-        Drag tiles into the blanks, or tap a tile and then a blank. Tap a filled blank to clear it.
-      </p>
+      <div className="flex items-center justify-between gap-3 mb-4 min-h-[32px]">
+        <p className="text-white/40 text-xs">
+          {selectedTile
+            ? `Now tap a blank for “${selectedTile.word}”`
+            : selectedSlot !== null
+            ? `Now tap a tile for blank ${selectedSlot + 1}`
+            : "Tap a tile then a blank, or drag. Tap a filled blank to clear it."}
+        </p>
+        {filled > 0 && (
+          <Button size="sm" variant="ghost" onClick={clearAll} className="shrink-0">
+            Clear
+          </Button>
+        )}
+      </div>
 
       <TileHand
         tiles={hand}
         placedTileIds={placedTileIds}
         selectedTileId={selectedTile?.id}
         onTileClick={handleTileClick}
+        animateToSentence
       />
 
+      <p aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
+
       <div className="mt-6">
-        {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+        {error && (
+          <p role="alert" className="text-red-400 text-sm mb-2">
+            {error}
+          </p>
+        )}
         <Button size="lg" className="w-full" onClick={handleSubmit} disabled={!allFilled || submitting}>
           {submitting ? "Submitting…" : allFilled ? "Submit" : `Submit (${filled}/${slotCount} filled)`}
         </Button>
       </div>
 
-      <DragOverlay>{activeDrag && <TileGhost word={activeDrag.word} />}</DragOverlay>
+      <DragOverlay dropAnimation={null}>
+        {activeDrag && <TileGhost word={activeDrag.word} category={activeDrag.category} />}
+      </DragOverlay>
     </DndContext>
   );
 }

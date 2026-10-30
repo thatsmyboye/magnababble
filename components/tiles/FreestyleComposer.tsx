@@ -22,8 +22,9 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { AnimatePresence, motion } from "framer-motion";
 import { TileHand } from "@/components/tiles/TileHand";
-import { TileGhost, tileColorClass } from "@/components/tiles/Tile";
+import { TileGhost, TILE_BASE_CLASS, tileColorClass } from "@/components/tiles/Tile";
 import { Button } from "@/components/ui/button";
 import { FREESTYLE_MAX_WORDS, renderFreestyle } from "@/lib/game/scoring";
 import { cn } from "@/lib/utils";
@@ -47,10 +48,11 @@ interface FreestyleComposerProps {
 export function FreestyleComposer({ hand, onSubmit, submitting, error }: FreestyleComposerProps) {
   const [sentence, setSentence] = useState<string[]>([]);
   const [activeDrag, setActiveDrag] = useState<TileData | null>(null);
+  const [announcement, setAnnouncement] = useState("");
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } })
   );
 
   const tileById = useMemo(() => new Map(hand.map((t) => [t.id, t])), [hand]);
@@ -61,10 +63,17 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
   function append(tileId: string) {
     if (inSentence.has(tileId) || full) return;
     setSentence((prev) => [...prev, tileId]);
+    setAnnouncement(`Added ${tileById.get(tileId)?.word ?? "tile"}`);
   }
 
   function remove(tileId: string) {
     setSentence((prev) => prev.filter((id) => id !== tileId));
+    setAnnouncement(`Removed ${tileById.get(tileId)?.word ?? "tile"}`);
+  }
+
+  function clearAll() {
+    setSentence([]);
+    setAnnouncement("Cleared the sentence");
   }
 
   function insertBefore(tileId: string, beforeId: string) {
@@ -130,12 +139,19 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
     >
       <SentenceBoard sentence={sentence} tileById={tileById} onRemove={remove} />
 
-      <p className="mt-2 mb-3 text-white/40 text-xs text-center">
-        Tap tiles to add them, tap a word to remove it, drag to reorder.{" "}
-        <span className={cn(full && "text-amber-300")}>
-          {sentence.length}/{FREESTYLE_MAX_WORDS} tiles
-        </span>
-      </p>
+      <div className="flex items-center justify-between gap-3 mt-2 mb-4 min-h-[32px]">
+        <p className="text-white/40 text-xs">
+          Tap tiles to add them, tap a word to remove it, drag to reorder.{" "}
+          <span className={cn("tabular-nums", full && "text-amber-300 font-semibold")}>
+            {sentence.length}/{FREESTYLE_MAX_WORDS}
+          </span>
+        </p>
+        {sentence.length > 0 && (
+          <Button size="sm" variant="ghost" onClick={clearAll} className="shrink-0">
+            Clear
+          </Button>
+        )}
+      </div>
 
       <TrayDropZone>
         <TileHand
@@ -147,8 +163,16 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
         />
       </TrayDropZone>
 
+      <p aria-live="polite" className="sr-only">
+        {announcement}
+      </p>
+
       <div className="mt-6">
-        {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+        {error && (
+          <p role="alert" className="text-red-400 text-sm mb-2">
+            {error}
+          </p>
+        )}
         <Button
           size="lg"
           className="w-full"
@@ -159,7 +183,9 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
         </Button>
       </div>
 
-      <DragOverlay>{activeDrag && <TileGhost word={activeDrag.word} />}</DragOverlay>
+      <DragOverlay dropAnimation={null}>
+        {activeDrag && <TileGhost word={activeDrag.word} category={activeDrag.category} />}
+      </DragOverlay>
     </DndContext>
   );
 }
@@ -177,59 +203,90 @@ function SentenceBoard({ sentence, tileById, onRemove }: SentenceBoardProps) {
   return (
     <div
       ref={setNodeRef}
+      role="group"
+      aria-label="Your sentence"
       className={cn(
-        "rounded-2xl border-2 border-dashed px-4 py-4 min-h-[112px] transition-colors",
+        "rounded-2xl border-2 border-dashed px-4 py-4 min-h-[128px] transition-colors",
         isOver ? "border-violet-400 bg-violet-900/30" : "border-white/20 bg-white/5"
       )}
     >
       {sentence.length === 0 ? (
-        <p className="text-white/30 text-center py-4">Your sentence will appear here</p>
+        <p className="text-white/30 text-center py-6 text-lg">Your sentence will appear here</p>
       ) : (
         <>
           <SortableContext items={sentence} strategy={rectSortingStrategy}>
-            <div className="flex flex-wrap gap-2 justify-center">
-              {sentence.map((id) => {
-                const tile = tileById.get(id);
-                if (!tile) return null;
-                return <SentenceWord key={id} tile={tile} onRemove={() => onRemove(id)} />;
-              })}
+            <div className="flex flex-wrap gap-2.5 justify-center">
+              <AnimatePresence initial={false}>
+                {sentence.map((id, i) => {
+                  const tile = tileById.get(id);
+                  if (!tile) return null;
+                  return (
+                    <SentenceWord
+                      key={id}
+                      tile={tile}
+                      position={i + 1}
+                      total={sentence.length}
+                      onRemove={() => onRemove(id)}
+                    />
+                  );
+                })}
+              </AnimatePresence>
             </div>
           </SortableContext>
-          <p className="mt-3 text-center text-white/60 text-sm italic">{preview}</p>
+          <p className="mt-4 text-center text-white/70 text-lg italic leading-snug" aria-live="polite">
+            {preview}
+          </p>
         </>
       )}
     </div>
   );
 }
 
-function SentenceWord({ tile, onRemove }: { tile: TileData; onRemove: () => void }) {
+interface SentenceWordProps {
+  tile: TileData;
+  position: number;
+  total: number;
+  onRemove: () => void;
+}
+
+function SentenceWord({ tile, position, total, onRemove }: SentenceWordProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tile.id,
   });
 
   return (
-    <button
+    // Outer element belongs to dnd kit (sortable transform); inner to Framer (pop in/out).
+    <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
-      {...attributes}
-      {...listeners}
-      onClick={onRemove}
-      title="Tap to remove"
-      className={cn(
-        "inline-flex items-center px-3 py-1.5 rounded-lg border text-white text-sm font-semibold cursor-grab select-none touch-none",
-        tileColorClass(tile.category),
-        isDragging && "opacity-40"
-      )}
+      className={cn("inline-flex", isDragging && "opacity-40")}
     >
-      {tile.word}
-    </button>
+      <motion.button
+        type="button"
+        {...attributes}
+        {...listeners}
+        onClick={onRemove}
+        aria-label={`${tile.word}, word ${position} of ${total}. Press to remove.`}
+        initial={{ scale: 0.5, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.5, opacity: 0 }}
+        whileTap={{ scale: 0.92 }}
+        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+        className={cn(TILE_BASE_CLASS, "cursor-grab", tileColorClass(tile.category))}
+      >
+        {tile.word}
+      </motion.button>
+    </div>
   );
 }
 
 function TrayDropZone({ children }: { children: React.ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: TRAY_ID });
   return (
-    <div ref={setNodeRef} className={cn("rounded-2xl transition-shadow", isOver && "ring-2 ring-red-400/60")}>
+    <div
+      ref={setNodeRef}
+      className={cn("rounded-2xl transition-shadow", isOver && "ring-2 ring-red-400/60")}
+    >
       {children}
     </div>
   );

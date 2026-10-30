@@ -12,6 +12,12 @@ interface TileHandProps {
   dragIdPrefix?: string;
   /** Show glue words in their own row. */
   grouped?: boolean;
+  /** Give tiles shared layout ids so they animate into the sentence. */
+  animateToSentence?: boolean;
+}
+
+export function tileLayoutId(tileId: string): string {
+  return `tile-${tileId}`;
 }
 
 export function TileHand({
@@ -21,18 +27,21 @@ export function TileHand({
   onTileClick,
   dragIdPrefix = "",
   grouped = false,
+  animateToSentence = false,
 }: TileHandProps) {
   const glue = grouped ? tiles.filter((t) => t.category === "glue") : [];
   const content = grouped ? tiles.filter((t) => t.category !== "glue") : tiles;
+  const remaining = tiles.length - placedTileIds.size;
 
   const renderTiles = (list: TileData[]) => (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2.5">
       {list.map((tile) => (
         <Tile
           key={tile.id}
           id={`${dragIdPrefix}${tile.id}`}
           word={tile.word}
           category={tile.category}
+          layoutId={animateToSentence ? tileLayoutId(tile.id) : undefined}
           placed={placedTileIds.has(tile.id)}
           selected={selectedTileId === tile.id}
           onClick={() => !placedTileIds.has(tile.id) && onTileClick?.(tile)}
@@ -42,11 +51,17 @@ export function TileHand({
   );
 
   return (
-    <div className="bg-black/30 border border-white/10 rounded-2xl p-4 space-y-4">
+    <section
+      aria-label="Your tiles"
+      className="bg-black/30 border border-white/10 rounded-2xl p-4 space-y-4"
+    >
       <div>
-        <p className="text-white/40 text-xs uppercase tracking-widest mb-3">
-          {grouped ? "Word tiles" : "Your tiles"}
-        </p>
+        <div className="flex items-baseline justify-between mb-3">
+          <p className="text-white/40 text-xs uppercase tracking-widest">
+            {grouped ? "Word tiles" : "Your tiles"}
+          </p>
+          <p className="text-white/30 text-xs tabular-nums">{remaining} left</p>
+        </div>
         {renderTiles(content)}
       </div>
       {glue.length > 0 && (
@@ -55,6 +70,6 @@ export function TileHand({
           {renderTiles(glue)}
         </div>
       )}
-    </div>
+    </section>
   );
 }

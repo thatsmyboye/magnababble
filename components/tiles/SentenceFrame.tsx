@@ -1,43 +1,76 @@
 "use client";
 
 import { useDroppable } from "@dnd-kit/core";
+import { motion } from "framer-motion";
+import { tileColorClass } from "@/components/tiles/Tile";
+import { tileLayoutId } from "@/components/tiles/TileHand";
 import { cn } from "@/lib/utils";
+import type { TileData } from "@/lib/game/types";
 
 interface SlotProps {
   slotIndex: number;
-  word: string | null;
+  slotCount: number;
+  tile: TileData | null;
   onClick?: () => void;
   highlighted?: boolean;
 }
 
-function Slot({ slotIndex, word, onClick, highlighted }: SlotProps) {
+function Slot({ slotIndex, slotCount, tile, onClick, highlighted }: SlotProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: `slot-${slotIndex}`,
     data: { slotIndex },
   });
 
+  const position = `Blank ${slotIndex + 1} of ${slotCount}`;
+  const label = tile
+    ? `${position}: ${tile.word}. Press to remove.`
+    : highlighted
+    ? `${position}, empty, selected. Press a tile to fill it.`
+    : `${position}, empty. Press to select, then press a tile.`;
+
   return (
     <button
       ref={setNodeRef}
+      type="button"
       onClick={onClick}
+      aria-label={label}
+      data-slot-empty={tile ? undefined : ""}
+      title={tile ? "Click to remove" : "Drop a tile here"}
       className={cn(
-        "inline-flex items-center justify-center min-w-[80px] px-3 py-1 rounded-lg border-2 border-dashed text-sm font-semibold transition-all mx-1",
-        word
-          ? "bg-violet-600 border-violet-400 text-white cursor-pointer hover:bg-red-600 hover:border-red-400"
-          : "border-white/30 text-white/30",
-        isOver && !word && "border-violet-400 bg-violet-900/40 scale-105",
-        highlighted && !word && "border-yellow-400 bg-yellow-900/20"
+        "relative inline-flex items-center justify-center min-w-[96px] min-h-[44px] rounded-xl border-2 border-dashed mx-1 align-middle transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-indigo-950",
+        tile
+          ? "border-transparent p-0"
+          : "border-white/30 text-white/30 hover:border-white/50 hover:bg-white/5",
+        isOver && !tile && "border-violet-400 bg-violet-900/40 scale-105",
+        highlighted && !tile && "border-yellow-400 bg-yellow-900/20 animate-pulse"
       )}
-      title={word ? "Click to remove" : "Drop a tile here"}
     >
-      {word ?? "______"}
+      {tile ? (
+        <motion.span
+          layoutId={tileLayoutId(tile.id)}
+          transition={{ type: "spring", stiffness: 400, damping: 32 }}
+          className={cn(
+            "inline-flex items-center min-h-[44px] px-3.5 py-2 rounded-xl border-2 text-white text-base font-semibold shadow-md shadow-black/30 group",
+            tileColorClass(tile.category)
+          )}
+        >
+          {tile.word}
+          <span aria-hidden className="ml-2 text-white/60 text-xs">
+            ✕
+          </span>
+        </motion.span>
+      ) : (
+        <span aria-hidden className="px-3 text-sm tracking-widest">
+          ______
+        </span>
+      )}
     </button>
   );
 }
 
 interface SentenceFrameProps {
   frame: string;
-  placements: (string | null)[];
+  placements: (TileData | null)[];
   onSlotClick?: (slotIndex: number) => void;
   selectedSlotIndex?: number | null;
 }
@@ -49,17 +82,25 @@ export function SentenceFrame({
   selectedSlotIndex,
 }: SentenceFrameProps) {
   const parts = frame.split("__");
+  const slotCount = parts.length - 1;
   let slotIndex = 0;
 
   const elements: React.ReactNode[] = [];
 
   parts.forEach((part, i) => {
     if (part) {
-      elements.push(
-        <span key={`text-${i}`} className="text-white text-xl font-medium">
-          {part}
-        </span>
-      );
+      // Keep each word unbreakable so the sentence wraps at natural points.
+      part
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .forEach((word, j) => {
+          elements.push(
+            <span key={`text-${i}-${j}`} className="text-white text-2xl font-semibold">
+              {word}
+            </span>
+          );
+        });
     }
 
     if (i < parts.length - 1) {
@@ -68,7 +109,8 @@ export function SentenceFrame({
         <Slot
           key={`slot-${idx}`}
           slotIndex={idx}
-          word={placements[idx] ?? null}
+          slotCount={slotCount}
+          tile={placements[idx] ?? null}
           onClick={() => onSlotClick?.(idx)}
           highlighted={selectedSlotIndex === idx}
         />
@@ -78,8 +120,12 @@ export function SentenceFrame({
   });
 
   return (
-    <div className="bg-white/5 border border-white/10 rounded-2xl px-6 py-5 text-center leading-loose">
-      <div className="flex flex-wrap items-center justify-center gap-y-3">
+    <div
+      role="group"
+      aria-label="Sentence to complete"
+      className="bg-white/5 border border-white/10 rounded-2xl px-4 py-5 text-center"
+    >
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-3 leading-relaxed">
         {elements}
       </div>
     </div>
