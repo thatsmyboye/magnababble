@@ -4,11 +4,17 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { api } from "@/lib/api/client";
+import { ROUND_OPTIONS } from "@/lib/game/engine-constants";
+import { MODE_LABELS, ROOM_MODES, type RoomMode } from "@/lib/game/phases";
+import { storeCredentials } from "@/lib/hooks/useRoom";
+import { cn } from "@/lib/utils";
 
 export function CreateRoom() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [rounds, setRounds] = useState(5);
+  const [mode, setMode] = useState<RoomMode>("mixed");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -19,23 +25,13 @@ export function CreateRoom() {
     setError("");
 
     try {
-      const res = await fetch("/api/rooms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostName: name.trim(), roundCount: rounds }),
-      });
+      const { code, playerId, playerToken } = await api<{
+        code: string;
+        playerId: string;
+        playerToken: string;
+      }>("/api/rooms", { body: { hostName: name.trim(), roundCount: rounds, mode } });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error ?? "Failed to create room");
-      }
-
-      const { code, hostToken, playerId, playerToken } = await res.json();
-
-      localStorage.setItem(`magnababble_token_${code}`, playerToken);
-      localStorage.setItem(`magnababble_player_${code}`, playerId);
-      localStorage.setItem(`magnababble_host_${code}`, hostToken);
-
+      storeCredentials(code, playerId, playerToken);
       router.push(`/room/${code}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -55,23 +51,53 @@ export function CreateRoom() {
           required
         />
       </div>
+
       <div>
         <label className="block text-sm text-white/60 mb-1">Rounds</label>
-        <select
-          value={rounds}
-          onChange={(e) => setRounds(Number(e.target.value))}
-          className="w-full rounded-xl bg-white/10 border border-white/20 px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
-        >
-          {[3, 5, 7, 10].map((n) => (
-            <option key={n} value={n} className="bg-indigo-900">
-              {n} rounds
-            </option>
+        <div className="grid grid-cols-4 gap-2">
+          {ROUND_OPTIONS.map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setRounds(n)}
+              className={cn(
+                "rounded-xl border px-3 py-2 text-sm font-semibold transition-colors",
+                rounds === n
+                  ? "bg-violet-600 border-violet-400 text-white"
+                  : "bg-white/5 border-white/15 text-white/70 hover:bg-white/10"
+              )}
+            >
+              {n}
+            </button>
           ))}
-        </select>
+        </div>
       </div>
+
+      <div>
+        <label className="block text-sm text-white/60 mb-1">Style</label>
+        <div className="space-y-2">
+          {ROOM_MODES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                "w-full text-left rounded-xl border px-4 py-2.5 transition-colors",
+                mode === m
+                  ? "bg-violet-600/40 border-violet-400"
+                  : "bg-white/5 border-white/15 hover:bg-white/10"
+              )}
+            >
+              <span className="block text-white font-semibold text-sm">{MODE_LABELS[m].title}</span>
+              <span className="block text-white/50 text-xs">{MODE_LABELS[m].blurb}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       {error && <p className="text-red-400 text-sm">{error}</p>}
       <Button type="submit" size="lg" className="w-full" disabled={loading}>
-        {loading ? "Creating..." : "Create Game"}
+        {loading ? "Creating…" : "Create game"}
       </Button>
     </form>
   );

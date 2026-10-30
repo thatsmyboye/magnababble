@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-function getServiceClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-  );
-}
+import {
+  advanceIfAllVoted,
+  fetchPlayerByToken,
+  fetchRoundById,
+  recountVotes,
+  type RoomRow,
+} from "@/lib/game/engine";
+import { getServiceClient } from "@/lib/supabase/service";
+import { bearerToken, handleRouteError, jsonError, readJson } from "@/lib/api/helpers";
 
 export async function POST(
   request: Request,
@@ -15,136 +16,54 @@ export async function POST(
   const { id: roundId } = await params;
 
   try {
-    const authHeader = request.headers.get("Authorization");
-    const playerToken = authHeader?.replace("Bearer ", "");
+    const token = bearerToken(request);
+    if (!token) return jsonError("Unauthorized", 401);
 
-    if (!playerToken) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const body = await readJson<{ submissionId: string }>(request);
+    const submissionId = body.submissionId;
+    if (typeof submissionId !== "string" || !submissionId) {
+      return jsonError("submissionId required");
     }
 
-    const { submissionId }: { submissionId: string } = await request.json();
+    const sb = getServiceClient();
 
-    if (!submissionId) {
-      return NextResponse.json({ error: "submissionId required" }, { status: 400 });
-    }
+    const round = await fetchRoundById(sb, roundId);
+    if (!round) return jsonError("Round not found", 404);
 
-    const supabase = getServiceClient();
+    const player = await fetchPlayerByToken(sb, round.room_id, token);
+    if (!player) return jsonError("Invalid player token", 401);
 
-    // Validate player
-    const { data: player, error: playerError } = await supabase
-      .from("players")
-      .select("id")
-      .eq("token", playerToken)
-      .single();
+    if (round.phase !== "voting") return jsonError("Voting is not open");
 
-    if (playerError || !player) {
-      return NextResponse.json({ error: "Invalid player token" }, { status: 401 });
-    }
-
-    // Validate round phase
-    const { data: round } = await supabase
-      .from("rounds")
-      .select("phase")
-      .eq("id", roundId)
-      .single();
-
-    if (round?.phase !== "voting") {
-      return NextResponse.json({ error: "Voting phase is not active" }, { status: 400 });
-    }
-
-    // Prevent voting for own submission
-    const { data: ownSubmission } = await supabase
+    const { data: target } = await sb
       .from("submissions")
-      .select("id")
-      .eq("round_id", roundId)
-      .eq("player_id", player.id)
-      .single();
+      .select("id, player_id")
+      .eq("id", submissionId)
+      .eq("round_id", round.id)
+      .maybeSingle();
+    if (!target) return jsonError("Submission not found", 404);
+    if (target.player_id === player.id) return jsonError("You can't vote for your own sentence");
 
-    if (ownSubmission?.id === submissionId) {
-      return NextResponse.json({ error: "Cannot vote for your own submission" }, { status: 400 });
-    }
-
-    // Upsert vote (one vote per player per round)
-    const { error: voteError } = await supabase
+    // One vote per player per round; re-voting replaces the previous choice.
+    const { error: voteError } = await sb
       .from("votes")
       .upsert(
-        { round_id: roundId, voter_id: player.id, submission_id: submissionId },
+        { round_id: round.id, voter_id: player.id, submission_id: submissionId },
         { onConflict: "round_id,voter_id" }
       );
-
     if (voteError) throw voteError;
 
-    // Recount votes for the submission
-    const { count: voteCount } = await supabase
-      .from("votes")
-      .select("id", { count: "exact", head: true })
-      .eq("submission_id", submissionId);
+    await recountVotes(sb, round.id);
 
-    await supabase
-      .from("submissions")
-      .update({ vote_count: voteCount ?? 0 })
-      .eq("id", submissionId);
-
-    // Also recount for previously voted submission if player changed vote
-    const { data: allSubmissions } = await supabase
-      .from("submissions")
-      .select("id")
-      .eq("round_id", roundId);
-
-    if (allSubmissions) {
-      for (const sub of allSubmissions) {
-        if (sub.id !== submissionId) {
-          const { count } = await supabase
-            .from("votes")
-            .select("id", { count: "exact", head: true })
-            .eq("submission_id", sub.id);
-          await supabase
-            .from("submissions")
-            .update({ vote_count: count ?? 0 })
-            .eq("id", sub.id);
-        }
-      }
-    }
-
-    // Auto-advance if all players voted
-    const { count: playerCount } = await supabase
-      .from("players")
-      .select("id", { count: "exact", head: true })
-      .eq(
-        "room_id",
-        (
-          await supabase.from("rounds").select("room_id").eq("id", roundId).single()
-        ).data?.room_id ?? ""
-      );
-
-    const { count: votePlayerCount } = await supabase
-      .from("votes")
-      .select("voter_id", { count: "exact", head: true })
-      .eq("round_id", roundId);
-
-    if ((votePlayerCount ?? 0) >= (playerCount ?? 0)) {
-      const { data: roundData } = await supabase
-        .from("rounds")
-        .select("rooms(code, host_token)")
-        .eq("id", roundId)
-        .single();
-
-      const roomRaw = roundData?.rooms as unknown as { code: string; host_token: string } | { code: string; host_token: string }[] | null;
-      const room = Array.isArray(roomRaw) ? roomRaw[0] : roomRaw;
-      if (room) {
-        await fetch(
-          `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/rooms/${room.code}/next`,
-          {
-            method: "POST",
-            headers: { Authorization: `Bearer ${room.host_token}` },
-          }
-        );
-      }
-    }
+    const { data: roomRow } = await sb
+      .from("rooms")
+      .select("id, code, status, round_count, current_round, mode")
+      .eq("id", round.room_id)
+      .single();
+    if (roomRow) await advanceIfAllVoted(sb, roomRow as RoomRow, round.id);
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("POST /api/rounds/[id]/vote:", err);
-    return NextResponse.json({ error: "Failed to cast vote" }, { status: 500 });
+    return handleRouteError("POST /api/rounds/[id]/vote", err);
   }
 }
