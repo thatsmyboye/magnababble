@@ -21,8 +21,18 @@ Games support 2 to 10 players and 1 to 15 rounds. When creating a game the host 
 - **Next.js 15** (App Router, TypeScript, route handlers)
 - **Supabase** (Postgres, Realtime change notifications, row-level security)
 - **dnd kit** (drag-and-drop and sortable tiles, touch and mouse)
+- **Framer Motion** (tile and reveal animations, honors reduced-motion settings)
 - **Tailwind CSS**
 - **Vitest** for unit and integration tests
+
+## Presentation details
+
+- Tiles fly from the hand into the blank you tap, press with a spring, and leave an outline behind in the hand.
+- Every composer and vote card is keyboard operable, with descriptive labels and live-region announcements for screen readers.
+- A timer bar under each phase header drains and turns amber, then red.
+- Voting shows each player the entries in a different order, so no sentence benefits from going first.
+- Results reveal in a synchronized sequence on every screen: cards, then vote counts from fewest to most, then authors, then the winner. A late refresh lands on the finished state.
+- The final scoreboard is a podium with confetti; the lobby has initials avatars, a QR code for the invite link, and copy or native share buttons.
 
 ## Local setup
 
@@ -83,10 +93,10 @@ app/
     rounds/[id]/            # submit, vote
 
 components/
-  home/                     # CreateRoom, JoinRoom
+  home/                     # CreateRoom, JoinRoom, HeroDemo
   room/                     # Lobby, JoinInPlace, one component per phase, FinalScoreboard
   tiles/                    # Tile, TileHand, SentenceFrame, FrameComposer, FreestyleComposer
-  ui/                       # Button, Input, Timer, PlayerList, PhaseHeader, Sentence
+  ui/                       # Button, Input, Timer, PlayerList, Avatar, PhaseHeader, Sentence, CountUp
 
 lib/
   game/engine.ts            # Server-side state machine (compare-and-set transitions)
@@ -94,7 +104,7 @@ lib/
   game/scoring.ts           # Rendering and slot helpers
   game/phases.ts            # Phases, durations, room modes
   game/types.ts             # Shapes shared by API and client
-  hooks/                    # useRoom (state + Realtime), usePhaseTimer
+  hooks/                    # useRoom (state + Realtime), usePhaseTimer, useElapsed
   supabase/                 # Browser client (Realtime) and service-role client (API)
 
 supabase/migrations/        # Schema, seed content, functions

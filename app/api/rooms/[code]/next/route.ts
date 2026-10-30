@@ -30,19 +30,29 @@ export async function POST(
     if (room.status === "lobby") return jsonError("Game has not started");
     // A finished room answers "stale" (via the engine) so late timers are harmless.
 
-    if (!player.is_host && room.status === "playing") {
-      const round = await fetchCurrentRound(sb, room);
-      const endsAt = round?.phase_ends_at ? new Date(round.phase_ends_at).getTime() : 0;
-      if (Date.now() < endsAt - NON_HOST_GRACE_MS) {
-        return jsonError("Only the host can skip ahead before time is up", 403);
-      }
-    }
-
     const expectedPhase = (PHASE_ORDER as string[]).includes(body.expectedPhase ?? "")
       ? (body.expectedPhase as RoundPhase)
       : undefined;
     const expectedRound =
       typeof body.expectedRound === "number" ? body.expectedRound : undefined;
+
+    if (room.status === "playing") {
+      const round = await fetchCurrentRound(sb, room);
+      // A timer that fired for a phase the game has already left is simply stale.
+      if (
+        round &&
+        ((expectedPhase !== undefined && expectedPhase !== round.phase) ||
+          (expectedRound !== undefined && expectedRound !== round.round_number))
+      ) {
+        return NextResponse.json({ status: "stale" });
+      }
+      if (!player.is_host) {
+        const endsAt = round?.phase_ends_at ? new Date(round.phase_ends_at).getTime() : 0;
+        if (Date.now() < endsAt - NON_HOST_GRACE_MS) {
+          return jsonError("Only the host can skip ahead before time is up", 403);
+        }
+      }
+    }
 
     const result = await advanceRoom(sb, room, { expectedPhase, expectedRound });
     return NextResponse.json(result);

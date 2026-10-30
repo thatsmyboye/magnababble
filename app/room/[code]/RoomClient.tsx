@@ -127,6 +127,7 @@ export function RoomClient({ code }: RoomClientProps) {
           roundCount={room.round_count}
           submissions={state.submissions}
           myVote={state.myVote}
+          myPlayerId={me.id}
           playerCount={players.length}
           token={token}
           onVoted={refresh}

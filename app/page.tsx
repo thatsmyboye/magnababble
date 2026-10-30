@@ -1,15 +1,24 @@
 import { CreateRoom } from "@/components/home/CreateRoom";
+import { HeroDemo } from "@/components/home/HeroDemo";
 import { JoinRoom } from "@/components/home/JoinRoom";
+import { MAX_PLAYERS, MIN_PLAYERS } from "@/lib/game/engine-constants";
 
 export default function Home() {
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-4 py-12">
-      <div className="mb-10 text-center">
+      <div className="mb-6 text-center">
         <h1 className="text-6xl font-black tracking-tight text-white mb-2">
           Magna<span className="text-violet-400">babble</span>
         </h1>
         <p className="text-white/50 text-lg">Fill in the blanks. Win the crowd.</p>
       </div>
+
+      <div className="w-full mb-3">
+        <HeroDemo />
+      </div>
+      <p className="text-white/40 text-sm text-center mb-10">
+        {MIN_PLAYERS}–{MAX_PLAYERS} players · about 2 minutes a round · phones, tablets or laptops
+      </p>
 
       <div className="grid md:grid-cols-2 gap-6 w-full max-w-2xl items-start">
         <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
@@ -36,7 +45,7 @@ export default function Home() {
       </div>
 
       <p className="mt-10 text-white/30 text-sm text-center max-w-sm">
-        No account needed. Share the room link with friends and play together in real time.
+        No account needed. Share the room link or QR code and play together in real time.
       </p>
     </main>
   );
