@@ -1,14 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
+import { Avatar } from "@/components/ui/avatar";
+import { MotionToggle } from "@/components/ui/motion-provider";
 import { PlayerList } from "@/components/ui/player-list";
 import { api } from "@/lib/api/client";
 import { MAX_PLAYERS, MIN_PLAYERS } from "@/lib/game/engine-constants";
 import { MODE_LABELS, type RoomMode } from "@/lib/game/phases";
 import type { PlayerPublic } from "@/lib/game/types";
+
+const TOAST_MS = 2_600;
+
+/** Rotating waiting lines for players who aren't the host. */
+const WAITING_LINES = [
+  "Waiting for the chaos to begin…",
+  "Stretch those vocabulary muscles…",
+  "Shuffling the word tiles…",
+  "Warming up the bad ideas…",
+];
 
 interface LobbyProps {
   code: string;
@@ -37,6 +49,35 @@ export function Lobby({
   const [copied, setCopied] = useState(false);
   const [showQr, setShowQr] = useState(false);
   const [canShare, setCanShare] = useState(false);
+  const [toasts, setToasts] = useState<PlayerPublic[]>([]);
+  const knownIds = useRef<Set<string> | null>(null);
+  const toastTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Announce new arrivals. The first render seeds the list silently.
+  useEffect(() => {
+    const ids = new Set(players.map((p) => p.id));
+    if (knownIds.current === null) {
+      knownIds.current = ids;
+      return;
+    }
+    const arrivals = players.filter((p) => !knownIds.current!.has(p.id) && p.id !== myPlayerId);
+    knownIds.current = ids;
+    if (arrivals.length === 0) return;
+    setToasts((t) => [...t, ...arrivals]);
+    // Each batch dismisses itself; timers are only cleared on unmount, so a
+    // second arrival never cancels the first toast's dismissal.
+    toastTimers.current.push(
+      setTimeout(
+        () => setToasts((t) => t.filter((x) => !arrivals.some((a) => a.id === x.id))),
+        TOAST_MS
+      )
+    );
+  }, [players, myPlayerId]);
+
+  useEffect(() => {
+    const timers = toastTimers.current;
+    return () => timers.forEach(clearTimeout);
+  }, []);
 
   useEffect(() => {
     setShareUrl(`${window.location.origin}/room/${code}`);
@@ -145,18 +186,66 @@ export function Lobby({
           <Button size="lg" onClick={handleStart} disabled={starting || !enough}>
             {starting ? "Starting…" : "Start game"}
           </Button>
-          {!enough && (
-            <p className="text-white/30 text-xs mt-2">Need at least {MIN_PLAYERS} players</p>
-          )}
+          <p className="text-white/40 text-xs mt-2">
+            {enough
+              ? "Everyone in? Start whenever you're ready."
+              : `Invite at least ${MIN_PLAYERS - players.length} more ${
+                  MIN_PLAYERS - players.length === 1 ? "player" : "players"
+                } to start`}
+          </p>
         </div>
       ) : (
-        <p className="text-white/40 text-sm flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
-          Waiting for the host to start the game…
-        </p>
+        <WaitingLine />
       )}
 
       <p className="mt-10 text-white/30 text-xs text-center max-w-xs">{MODE_LABELS[mode].blurb}</p>
+      <MotionToggle className="mt-4" />
+
+      <div
+        className="fixed inset-x-0 bottom-6 z-40 flex flex-col items-center gap-2 pointer-events-none"
+        role="status"
+        aria-live="polite"
+      >
+        <AnimatePresence>
+          {toasts.map((p) => (
+            <motion.div
+              key={p.id}
+              initial={{ opacity: 0, y: 24, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.95 }}
+              transition={{ type: "spring", stiffness: 400, damping: 26 }}
+              className="flex items-center gap-2 rounded-full bg-white text-indigo-950 pl-1.5 pr-4 py-1.5 shadow-xl font-bold"
+            >
+              <Avatar id={p.id} name={p.name} size="sm" />
+              {p.name} joined!
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
     </div>
+  );
+}
+
+function WaitingLine() {
+  const [index, setIndex] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setIndex((i) => (i + 1) % WAITING_LINES.length), 3_500);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <p className="text-white/50 text-sm flex items-center gap-2 min-h-[20px]">
+      <span className="inline-block w-2 h-2 rounded-full bg-violet-400 animate-pulse" aria-hidden />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
+          key={index}
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -4 }}
+        >
+          {WAITING_LINES[index]}
+        </motion.span>
+      </AnimatePresence>
+      <span className="sr-only">The host will start the game.</span>
+    </p>
   );
 }

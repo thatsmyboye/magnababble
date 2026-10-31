@@ -9,7 +9,25 @@ export type { GameState, PlayerPublic as Player, RoundPublic as Round, Submissio
 export const storageKeys = {
   token: (code: string) => `magnababble_token_${code}`,
   playerId: (code: string) => `magnababble_player_${code}`,
+  name: "magnababble_name",
 };
+
+/** The display name used last time, so returning players don't retype it. */
+export function readRememberedName(): string {
+  try {
+    return localStorage.getItem(storageKeys.name) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function rememberName(name: string) {
+  try {
+    localStorage.setItem(storageKeys.name, name.trim().slice(0, 20));
+  } catch {
+    // Storage unavailable — nothing to remember.
+  }
+}
 
 export function readStoredToken(code: string): string | null {
   try {
@@ -28,6 +46,11 @@ export function storeCredentials(code: string, playerId: string, token: string) 
   }
 }
 
+/** Consecutive failed refreshes before the UI says it is reconnecting. */
+const FAILURES_BEFORE_RECONNECTING = 2;
+
+export type ConnectionState = "online" | "reconnecting";
+
 /** Safety-net polling intervals in case Realtime is unavailable. */
 const POLL_MS: Record<string, number> = { lobby: 8_000, playing: 4_000, finished: 15_000 };
 
@@ -41,8 +64,13 @@ export function useRoom(code: string) {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
+  const [offline, setOffline] = useState(false);
 
   const tokenRef = useRef<string | null>(null);
+  // Whether the room has loaded at least once. A ref, not state, so the
+  // memoized refresh never reads a stale value after a network blip.
+  const loadedRef = useRef(false);
   const inFlight = useRef<Promise<void> | null>(null);
   const queued = useRef(false);
 
@@ -71,11 +99,16 @@ export function useRoom(code: string) {
         }
         if (!res.ok) throw new Error(`Status ${res.status}`);
         const data = (await res.json()) as GameState;
+        loadedRef.current = true;
         setState(data);
         setError(null);
+        setFailures(0);
       } catch (err) {
-        console.error("refresh failed", err);
-        if (!state) setError("Could not load the room");
+        console.warn("refresh failed", err);
+        setFailures((n) => n + 1);
+        // Only a room that never loaded is an error; later failures are a
+        // connection blip and the last good state stays on screen.
+        if (!loadedRef.current) setError("Could not load the room");
       } finally {
         setLoading(false);
       }
@@ -155,6 +188,22 @@ export function useRoom(code: string) {
     };
   }, [roundId, refresh]);
 
+  // Browser online/offline events: show the banner at once, refetch on return.
+  useEffect(() => {
+    const goOffline = () => setOffline(true);
+    const goOnline = () => {
+      setOffline(false);
+      void refresh();
+    };
+    setOffline(typeof navigator !== "undefined" && navigator.onLine === false);
+    window.addEventListener("offline", goOffline);
+    window.addEventListener("online", goOnline);
+    return () => {
+      window.removeEventListener("offline", goOffline);
+      window.removeEventListener("online", goOnline);
+    };
+  }, [refresh]);
+
   // Fallback polling, and a refresh when the tab becomes visible again.
   const status = state?.room.status;
   useEffect(() => {
@@ -170,5 +219,8 @@ export function useRoom(code: string) {
     };
   }, [status, refresh]);
 
-  return { state, token, loading, error, refresh, adoptToken };
+  const connection: ConnectionState =
+    offline || failures >= FAILURES_BEFORE_RECONNECTING ? "reconnecting" : "online";
+
+  return { state, token, loading, error, refresh, adoptToken, connection };
 }

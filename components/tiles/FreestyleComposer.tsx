@@ -6,13 +6,9 @@ import {
   DndContext,
   DragEndEvent,
   DragOverlay,
-  PointerSensor,
   pointerWithin,
   rectIntersection,
-  TouchSensor,
   useDroppable,
-  useSensor,
-  useSensors,
   type CollisionDetection,
 } from "@dnd-kit/core";
 import {
@@ -25,8 +21,10 @@ import { CSS } from "@dnd-kit/utilities";
 import { AnimatePresence, motion } from "framer-motion";
 import { TileHand } from "@/components/tiles/TileHand";
 import { TileGhost, TILE_BASE_CLASS, tileColorClass } from "@/components/tiles/Tile";
+import { useTileSensors } from "@/components/tiles/sensors";
 import { Button } from "@/components/ui/button";
 import { FREESTYLE_MAX_WORDS, renderFreestyle } from "@/lib/game/scoring";
+import { insertAfter, moveBy } from "@/lib/game/reorder";
 import { cn } from "@/lib/utils";
 import type { TileData } from "@/lib/game/types";
 
@@ -42,39 +40,67 @@ interface FreestyleComposerProps {
 }
 
 /**
- * Fridge-magnet composer: tap a tile to append it to the sentence, tap a
- * word in the sentence to send it back, drag words to reorder.
+ * Fridge-magnet composer. Everything works by tapping: tap a tile to add it,
+ * tap a word in the sentence to select it, then move it left or right or
+ * remove it. A new tile lands right after the selected word. Dragging is an
+ * optional shortcut for the same actions.
  */
 export function FreestyleComposer({ hand, onSubmit, submitting, error }: FreestyleComposerProps) {
   const [sentence, setSentence] = useState<string[]>([]);
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
   const [activeDrag, setActiveDrag] = useState<TileData | null>(null);
   const [announcement, setAnnouncement] = useState("");
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } })
-  );
+  const sensors = useTileSensors();
 
   const tileById = useMemo(() => new Map(hand.map((t) => [t.id, t])), [hand]);
   const inSentence = useMemo(() => new Set(sentence), [sentence]);
   const words = sentence.map((id) => tileById.get(id)?.word ?? "");
   const full = sentence.length >= FREESTYLE_MAX_WORDS;
 
+  const wordOf = (id: string) => tileById.get(id)?.word ?? "tile";
+
+  /** Add a tile from the hand: after the selected word, or at the end. */
+  function add(tileId: string) {
+    if (inSentence.has(tileId) || full) return;
+    const anchor = selectedWord && inSentence.has(selectedWord) ? selectedWord : null;
+    setSentence((prev) => insertAfter(prev, tileId, anchor));
+    if (anchor) setSelectedWord(tileId); // keep building from the new word
+    setAnnouncement(anchor ? `Added ${wordOf(tileId)} after ${wordOf(anchor)}` : `Added ${wordOf(tileId)}`);
+  }
+
   function append(tileId: string) {
     if (inSentence.has(tileId) || full) return;
     setSentence((prev) => [...prev, tileId]);
-    setAnnouncement(`Added ${tileById.get(tileId)?.word ?? "tile"}`);
+    setAnnouncement(`Added ${wordOf(tileId)}`);
   }
 
   function remove(tileId: string) {
     setSentence((prev) => prev.filter((id) => id !== tileId));
-    setAnnouncement(`Removed ${tileById.get(tileId)?.word ?? "tile"}`);
+    if (selectedWord === tileId) setSelectedWord(null);
+    setAnnouncement(`Removed ${wordOf(tileId)}`);
+  }
+
+  function move(tileId: string, delta: -1 | 1) {
+    const from = sentence.indexOf(tileId);
+    const next = moveBy(sentence, from, delta);
+    if (next === sentence) return;
+    setSentence(next);
+    setAnnouncement(`Moved ${wordOf(tileId)} to position ${from + delta + 1} of ${sentence.length}`);
+  }
+
+  function toggleSelect(tileId: string) {
+    setSelectedWord((cur) => (cur === tileId ? null : tileId));
+    if (selectedWord !== tileId) setAnnouncement(`${wordOf(tileId)} selected. Move it or remove it.`);
   }
 
   function clearAll() {
     setSentence([]);
+    setSelectedWord(null);
     setAnnouncement("Cleared the sentence");
   }
+
+  const selectedIndex = selectedWord ? sentence.indexOf(selectedWord) : -1;
 
   function insertBefore(tileId: string, beforeId: string) {
     if (full) return;
@@ -137,11 +163,57 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
       onDragEnd={handleDragEnd}
       onDragCancel={() => setActiveDrag(null)}
     >
-      <SentenceBoard sentence={sentence} tileById={tileById} onRemove={remove} />
+      <SentenceBoard
+        sentence={sentence}
+        tileById={tileById}
+        selectedWord={selectedWord}
+        onSelect={toggleSelect}
+      />
+
+      <AnimatePresence initial={false}>
+        {selectedWord && selectedIndex !== -1 && (
+          <motion.div
+            key="word-tools"
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            role="toolbar"
+            aria-label={`Edit ${wordOf(selectedWord)}`}
+            className="mt-2 flex items-center justify-center gap-2"
+          >
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => move(selectedWord, -1)}
+              disabled={selectedIndex === 0}
+              aria-label="Move left"
+            >
+              ◀ Move
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => move(selectedWord, 1)}
+              disabled={selectedIndex === sentence.length - 1}
+              aria-label="Move right"
+            >
+              Move ▶
+            </Button>
+            <Button size="sm" variant="danger" onClick={() => remove(selectedWord)}>
+              Remove
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedWord(null)}>
+              Done
+            </Button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="flex items-center justify-between gap-3 mt-2 mb-4 min-h-[32px]">
         <p className="text-white/40 text-xs">
-          Tap tiles to add them, tap a word to remove it, drag to reorder.{" "}
+          {selectedWord
+            ? `New tiles go after “${wordOf(selectedWord)}”.`
+            : "Tap tiles to add them. Tap a word in your sentence to move or remove it."}{" "}
           <span className={cn("tabular-nums", full && "text-amber-300 font-semibold")}>
             {sentence.length}/{FREESTYLE_MAX_WORDS}
           </span>
@@ -157,7 +229,7 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
         <TileHand
           tiles={hand}
           placedTileIds={inSentence}
-          onTileClick={(tile) => append(tile.id)}
+          onTileClick={(tile) => add(tile.id)}
           dragIdPrefix={TRAY_PREFIX}
           grouped
         />
@@ -193,10 +265,11 @@ export function FreestyleComposer({ hand, onSubmit, submitting, error }: Freesty
 interface SentenceBoardProps {
   sentence: string[];
   tileById: Map<string, TileData>;
-  onRemove: (tileId: string) => void;
+  selectedWord: string | null;
+  onSelect: (tileId: string) => void;
 }
 
-function SentenceBoard({ sentence, tileById, onRemove }: SentenceBoardProps) {
+function SentenceBoard({ sentence, tileById, selectedWord, onSelect }: SentenceBoardProps) {
   const { setNodeRef, isOver } = useDroppable({ id: SENTENCE_ID });
   const preview = renderFreestyle(sentence.map((id) => tileById.get(id)?.word ?? ""));
 
@@ -226,14 +299,15 @@ function SentenceBoard({ sentence, tileById, onRemove }: SentenceBoardProps) {
                       tile={tile}
                       position={i + 1}
                       total={sentence.length}
-                      onRemove={() => onRemove(id)}
+                      selected={selectedWord === id}
+                      onSelect={() => onSelect(id)}
                     />
                   );
                 })}
               </AnimatePresence>
             </div>
           </SortableContext>
-          <p className="mt-4 text-center text-white/70 text-lg italic leading-snug" aria-live="polite">
+          <p className="mt-4 text-center text-white text-xl font-semibold leading-snug" aria-live="polite">
             {preview}
           </p>
         </>
@@ -246,10 +320,11 @@ interface SentenceWordProps {
   tile: TileData;
   position: number;
   total: number;
-  onRemove: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }
 
-function SentenceWord({ tile, position, total, onRemove }: SentenceWordProps) {
+function SentenceWord({ tile, position, total, selected, onSelect }: SentenceWordProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tile.id,
   });
@@ -265,14 +340,20 @@ function SentenceWord({ tile, position, total, onRemove }: SentenceWordProps) {
         type="button"
         {...attributes}
         {...listeners}
-        onClick={onRemove}
-        aria-label={`${tile.word}, word ${position} of ${total}. Press to remove.`}
+        onClick={onSelect}
+        aria-pressed={selected}
+        aria-label={`${tile.word}, word ${position} of ${total}${selected ? ", selected" : ". Press to move or remove"}`}
         initial={{ scale: 0.5, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.5, opacity: 0 }}
         whileTap={{ scale: 0.92 }}
         transition={{ type: "spring", stiffness: 500, damping: 30 }}
-        className={cn(TILE_BASE_CLASS, "cursor-grab", tileColorClass(tile.category))}
+        className={cn(
+          TILE_BASE_CLASS,
+          "cursor-grab",
+          tileColorClass(tile.category),
+          selected && "ring-2 ring-white ring-offset-2 ring-offset-indigo-950 -translate-y-1"
+        )}
       >
         {tile.word}
       </motion.button>

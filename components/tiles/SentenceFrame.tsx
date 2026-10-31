@@ -13,9 +13,11 @@ interface SlotProps {
   tile: TileData | null;
   onClick?: () => void;
   highlighted?: boolean;
+  /** The blank the next tapped tile will land in. */
+  isNext?: boolean;
 }
 
-function Slot({ slotIndex, slotCount, tile, onClick, highlighted }: SlotProps) {
+function Slot({ slotIndex, slotCount, tile, onClick, highlighted, isNext }: SlotProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: `slot-${slotIndex}`,
     data: { slotIndex },
@@ -24,9 +26,9 @@ function Slot({ slotIndex, slotCount, tile, onClick, highlighted }: SlotProps) {
   const position = `Blank ${slotIndex + 1} of ${slotCount}`;
   const label = tile
     ? `${position}: ${tile.word}. Press to remove.`
-    : highlighted
-    ? `${position}, empty, selected. Press a tile to fill it.`
-    : `${position}, empty. Press to select, then press a tile.`;
+    : highlighted || isNext
+    ? `${position}, empty, next. Press a tile to fill it.`
+    : `${position}, empty. Press to choose this blank next.`;
 
   return (
     <button
@@ -41,6 +43,7 @@ function Slot({ slotIndex, slotCount, tile, onClick, highlighted }: SlotProps) {
         tile
           ? "border-transparent p-0"
           : "border-white/30 text-white/30 hover:border-white/50 hover:bg-white/5",
+        isNext && !tile && !highlighted && "border-violet-300 bg-violet-500/15 shadow-[0_0_16px_rgba(167,139,250,0.45)] animate-pulse",
         isOver && !tile && "border-violet-400 bg-violet-900/40 scale-105",
         highlighted && !tile && "border-yellow-400 bg-yellow-900/20 animate-pulse"
       )}
@@ -73,6 +76,7 @@ interface SentenceFrameProps {
   placements: (TileData | null)[];
   onSlotClick?: (slotIndex: number) => void;
   selectedSlotIndex?: number | null;
+  nextSlotIndex?: number | null;
 }
 
 export function SentenceFrame({
@@ -80,6 +84,7 @@ export function SentenceFrame({
   placements,
   onSlotClick,
   selectedSlotIndex,
+  nextSlotIndex,
 }: SentenceFrameProps) {
   const parts = frame.split("__");
   const slotCount = parts.length - 1;
@@ -113,6 +118,7 @@ export function SentenceFrame({
           tile={placements[idx] ?? null}
           onClick={() => onSlotClick?.(idx)}
           highlighted={selectedSlotIndex === idx}
+          isNext={nextSlotIndex === idx}
         />
       );
       slotIndex++;

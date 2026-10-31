@@ -13,13 +13,24 @@ import { ResultsPhase } from "@/components/room/ResultsPhase";
 import { FinalScoreboard } from "@/components/room/FinalScoreboard";
 import { JoinInPlace } from "@/components/room/JoinInPlace";
 import { Centered } from "@/components/ui/centered";
+import { ConnectionBanner } from "@/components/ui/connection-banner";
 
 interface RoomClientProps {
   code: string;
 }
 
 export function RoomClient({ code }: RoomClientProps) {
-  const { state, token, loading, error, refresh, adoptToken } = useRoom(code);
+  const roomState = useRoom(code);
+  return (
+    <>
+      <ConnectionBanner connection={roomState.connection} />
+      <RoomView code={code} roomState={roomState} />
+    </>
+  );
+}
+
+function RoomView({ code, roomState }: { code: string; roomState: ReturnType<typeof useRoom> }) {
+  const { state, token, loading, error, refresh, adoptToken } = roomState;
 
   const me = state?.me ?? null;
   const isHost = Boolean(me?.is_host);
@@ -142,6 +153,7 @@ export function RoomClient({ code }: RoomClientProps) {
           submissions={state.submissions}
           players={players}
           myPlayerId={me.id}
+          playerCount={players.length}
         />
       );
 

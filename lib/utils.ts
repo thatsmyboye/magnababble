@@ -25,6 +25,16 @@ export function normalizeRoomCode(input: string): string {
   return input.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
+/**
+ * Pull a room code out of whatever the player typed or pasted: a bare code
+ * ("bxkt"), or a full invite link ("https://…/room/BXKT?x=1").
+ */
+export function extractRoomCode(input: string): string {
+  const link = /\/room\/([A-Za-z0-9]+)/.exec(input);
+  const raw = link ? link[1] : input;
+  return normalizeRoomCode(raw).slice(0, ROOM_CODE_LENGTH);
+}
+
 export function generateToken(): string {
   return crypto.randomUUID();
 }
