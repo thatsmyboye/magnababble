@@ -116,7 +116,7 @@ describe("phases", () => {
   });
 
   it("computes an ISO deadline", () => {
-    expect(phaseEndsAt("prompt", false, 0)).toBe(new Date(phaseDurationMs("prompt")).toISOString());
+    expect(phaseEndsAt("prompt", false, null, 0)).toBe(new Date(phaseDurationMs("prompt")).toISOString());
   });
 
   it("validates modes", () => {

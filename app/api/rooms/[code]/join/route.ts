@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchRoomByCode, MAX_PLAYERS } from "@/lib/game/engine";
+import { recordEvent } from "@/lib/game/events";
 import { getServiceClient } from "@/lib/supabase/service";
 import { generateToken } from "@/lib/utils";
 import { cleanName, handleRouteError, jsonError, readJson } from "@/lib/api/helpers";
@@ -35,6 +36,8 @@ export async function POST(
       .select("id")
       .single();
     if (error) throw error;
+
+    await recordEvent(sb, room, "player_joined", { playerCount: (count ?? 0) + 1 });
 
     return NextResponse.json({ code: room.code, playerId: player.id, playerToken });
   } catch (err) {

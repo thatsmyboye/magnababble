@@ -3,6 +3,7 @@ import {
   advanceIfAllSubmitted,
   fetchPlayerByToken,
   fetchRoundById,
+  ROOM_COLUMNS,
   type RoomRow,
 } from "@/lib/game/engine";
 import { placementUsesHand } from "@/lib/game/dealing";
@@ -75,7 +76,7 @@ export async function POST(
 
     const { data: roomRow } = await sb
       .from("rooms")
-      .select("id, code, status, round_count, current_round, mode")
+      .select(ROOM_COLUMNS)
       .eq("id", round.room_id)
       .single();
     if (roomRow) await advanceIfAllSubmitted(sb, roomRow as RoomRow, round.id);

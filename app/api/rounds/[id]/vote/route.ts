@@ -4,6 +4,7 @@ import {
   fetchPlayerByToken,
   fetchRoundById,
   recountVotes,
+  ROOM_COLUMNS,
   type RoomRow,
 } from "@/lib/game/engine";
 import { getServiceClient } from "@/lib/supabase/service";
@@ -57,7 +58,7 @@ export async function POST(
 
     const { data: roomRow } = await sb
       .from("rooms")
-      .select("id, code, status, round_count, current_round, mode")
+      .select(ROOM_COLUMNS)
       .eq("id", round.room_id)
       .single();
     if (roomRow) await advanceIfAllVoted(sb, roomRow as RoomRow, round.id);

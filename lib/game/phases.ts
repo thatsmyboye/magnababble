@@ -1,3 +1,5 @@
+import { submitSeconds, voteSeconds, type RoomSettings } from "./settings";
+
 export type RoomStatus = "lobby" | "playing" | "finished";
 export type RoomMode = "frames" | "freestyle" | "mixed";
 export type RoundPhase = "prompt" | "submitting" | "voting" | "results";
@@ -36,13 +38,27 @@ export function nextPhase(current: RoundPhase): RoundPhase | null {
   return idx >= 0 && idx < PHASE_ORDER.length - 1 ? PHASE_ORDER[idx + 1] : null;
 }
 
-export function phaseDurationMs(phase: RoundPhase, freestyle = false): number {
-  if (phase === "submitting" && freestyle) return FREESTYLE_SUBMITTING_MS;
+/**
+ * How long a phase lasts. Writing and voting time follow the room's house
+ * rules when set; prompt and results are fixed.
+ */
+export function phaseDurationMs(
+  phase: RoundPhase,
+  freestyle = false,
+  settings?: RoomSettings | null
+): number {
+  if (phase === "submitting") return submitSeconds(settings, freestyle) * 1000;
+  if (phase === "voting") return voteSeconds(settings) * 1000;
   return PHASE_DURATIONS_MS[phase];
 }
 
-export function phaseEndsAt(phase: RoundPhase, freestyle = false, now = Date.now()): string {
-  return new Date(now + phaseDurationMs(phase, freestyle)).toISOString();
+export function phaseEndsAt(
+  phase: RoundPhase,
+  freestyle = false,
+  settings?: RoomSettings | null,
+  now = Date.now()
+): string {
+  return new Date(now + phaseDurationMs(phase, freestyle, settings)).toISOString();
 }
 
 export function isRoomMode(value: unknown): value is RoomMode {
