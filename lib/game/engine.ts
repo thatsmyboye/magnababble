@@ -12,12 +12,16 @@ import {
   dealFreestyleHand,
   type DealableTile,
 } from "./dealing";
-import { nextPhase, phaseEndsAt, type RoomMode, type RoundPhase } from "./phases";
+import { nextPhase, phaseDurationMs, phaseEndsAt, type RoomMode, type RoundPhase } from "./phases";
 import { countSlots, isFreestyle } from "./scoring";
+import type { RoomSettings } from "./settings";
+import { countPlayers, recordEvent } from "./events";
 import type {
   GameState,
   PlayerPublic,
   PromptPublic,
+  Recap,
+  RecapEntry,
   RoundPublic,
   SubmissionPublic,
   TileData,
@@ -36,6 +40,7 @@ export interface RoomRow {
   round_count: number;
   current_round: number;
   mode: RoomMode;
+  settings: RoomSettings;
 }
 
 export interface PlayerRow extends PlayerPublic {
@@ -76,7 +81,7 @@ export class EngineError extends Error {
 // Lookups
 // ---------------------------------------------------------------
 
-const ROOM_COLUMNS = "id, code, status, round_count, current_round, mode";
+export const ROOM_COLUMNS = "id, code, status, round_count, current_round, mode, settings";
 const ROUND_COLUMNS =
   "id, room_id, round_number, phase, phase_ends_at, prompt_id, prompts(id, theme, display_text, sentence_frame, tile_set_id)";
 
@@ -167,9 +172,18 @@ export async function pickPrompt(
 
   const used = new Set((usedRows ?? []).map((r) => r.prompt_id as string));
 
+  // House rules: restrict to the chosen themes, unless that leaves nothing.
+  const themes = new Set(room.settings?.themes ?? []);
+  const themed = themes.size > 0 ? prompts.filter((p) => themes.has(p.theme)) : prompts;
+  const fits = (p: PromptRow) => promptMatchesMode(p, room.mode, roundNumber);
+
+  // Prefer, in order: right theme + right style + unused, then relax one
+  // constraint at a time. Style beats theme, and theme beats freshness.
   const candidates = [
-    prompts.filter((p) => promptMatchesMode(p, room.mode, roundNumber) && !used.has(p.id)),
-    prompts.filter((p) => promptMatchesMode(p, room.mode, roundNumber)),
+    themed.filter((p) => fits(p) && !used.has(p.id)),
+    themed.filter(fits),
+    prompts.filter((p) => fits(p) && !used.has(p.id)),
+    prompts.filter(fits),
     prompts.filter((p) => !used.has(p.id)),
     prompts,
   ].find((list) => list.length > 0)!;
@@ -225,7 +239,7 @@ async function createRound(
       round_number: roundNumber,
       prompt_id: prompt.id,
       phase: "prompt",
-      phase_ends_at: phaseEndsAt("prompt", freestyle),
+      phase_ends_at: phaseEndsAt("prompt", freestyle, room.settings),
     })
     .select("id")
     .single();
@@ -285,11 +299,12 @@ async function casPhase(
   roundId: string,
   from: RoundPhase,
   to: RoundPhase,
-  freestyle: boolean
+  freestyle: boolean,
+  settings: RoomSettings
 ): Promise<boolean> {
   const { data, error } = await sb
     .from("rounds")
-    .update({ phase: to, phase_ends_at: phaseEndsAt(to, freestyle) })
+    .update({ phase: to, phase_ends_at: phaseEndsAt(to, freestyle, settings) })
     .eq("id", roundId)
     .eq("phase", from)
     .select("id");
@@ -339,7 +354,7 @@ export async function advanceRoom(
   }
 
   if (target !== null) {
-    const won = await casPhase(sb, round.id, round.phase, target, freestyle);
+    const won = await casPhase(sb, round.id, round.phase, target, freestyle, room.settings ?? {});
     if (!won) return { status: "stale" };
     if (target === "results") {
       // Scores are applied exactly once, by whoever won the CAS into results.
@@ -358,7 +373,12 @@ export async function advanceRoom(
       .eq("status", "playing")
       .select("id");
     if (error) throw error;
-    return (data?.length ?? 0) > 0 ? { status: "finished" } : { status: "stale" };
+    if ((data?.length ?? 0) === 0) return { status: "stale" };
+    await recordEvent(sb, room, "game_finished", {
+      playerCount: await countPlayers(sb, room.id),
+      extra: { rounds: room.round_count },
+    });
+    return { status: "finished" };
   }
 
   const { created } = await createRound(sb, room, nextRoundNumber);
@@ -427,6 +447,76 @@ export async function resetRoom(sb: ServiceClient, room: RoomRow): Promise<void>
 }
 
 // ---------------------------------------------------------------
+// End-of-game recap
+// ---------------------------------------------------------------
+
+/**
+ * Winners of every round plus the best sentence of the game. Built from the
+ * rounds and submissions still attached to the room, so it disappears on a
+ * rematch (which deletes the rounds) and with stale-room cleanup.
+ */
+export async function buildRecap(sb: ServiceClient, room: RoomRow): Promise<Recap> {
+  const [{ data: roundRows }, players] = await Promise.all([
+    sb
+      .from("rounds")
+      .select("id, round_number, prompts(theme, display_text)")
+      .eq("room_id", room.id)
+      .order("round_number"),
+    fetchPlayers(sb, room.id),
+  ]);
+
+  type RoundRowLite = {
+    id: string;
+    round_number: number;
+    prompts: { theme: string; display_text: string } | { theme: string; display_text: string }[] | null;
+  };
+  const rounds = (roundRows as RoundRowLite[] | null) ?? [];
+  if (rounds.length === 0) return { rounds: [], best: null };
+
+  const { data: subRows } = await sb
+    .from("submissions")
+    .select("id, round_id, player_id, rendered_text, vote_count")
+    .in(
+      "round_id",
+      rounds.map((r) => r.id)
+    );
+  type SubLite = { id: string; round_id: string; player_id: string; rendered_text: string; vote_count: number };
+  const subs = (subRows as SubLite[] | null) ?? [];
+  const nameOf = new Map(players.map((p) => [p.id, p.name]));
+
+  let best: RecapEntry | null = null;
+  const recapRounds = rounds.map((r) => {
+    const prompt = one(r.prompts);
+    const entries: RecapEntry[] = subs
+      .filter((sub) => sub.round_id === r.id)
+      .map((sub) => ({
+        round_number: r.round_number,
+        theme: prompt?.theme ?? "",
+        prompt: prompt?.display_text ?? "",
+        text: sub.rendered_text,
+        votes: sub.vote_count,
+        player_id: sub.player_id,
+        player_name: nameOf.get(sub.player_id) ?? "Someone",
+      }))
+      .sort((a, b) => b.votes - a.votes || a.text.localeCompare(b.text));
+
+    const top = entries[0]?.votes ?? 0;
+    const winners = top > 0 ? entries.filter((e) => e.votes === top) : [];
+    // Rounds are in order, so a strictly-greater check keeps the earliest on ties.
+    if (winners[0] && (!best || winners[0].votes > best.votes)) best = winners[0];
+
+    return {
+      round_number: r.round_number,
+      theme: prompt?.theme ?? "",
+      prompt: prompt?.display_text ?? "",
+      winners,
+    };
+  });
+
+  return { rounds: recapRounds, best };
+}
+
+// ---------------------------------------------------------------
 // Read model for the client
 // ---------------------------------------------------------------
 
@@ -444,9 +534,10 @@ export async function buildGameState(
   room: RoomRow,
   player: PlayerRow | null
 ): Promise<GameState> {
-  const [players, round] = await Promise.all([
+  const [players, round, recap] = await Promise.all([
     fetchPlayers(sb, room.id),
     fetchCurrentRound(sb, room),
+    room.status === "finished" ? buildRecap(sb, room) : Promise.resolve(null),
   ]);
 
   let roundPublic: RoundPublic | null = null;
@@ -524,6 +615,7 @@ export async function buildGameState(
       round_number: round.round_number,
       phase: round.phase,
       phase_ends_at: round.phase_ends_at,
+      phase_duration_ms: phaseDurationMs(round.phase, isFreestyle(prompt.sentence_frame), room.settings),
       prompt,
       freestyle: isFreestyle(prompt.sentence_frame),
       submission_count: subs.length,
@@ -539,6 +631,7 @@ export async function buildGameState(
       round_count: room.round_count,
       current_round: room.current_round,
       mode: room.mode,
+      settings: room.settings ?? {},
     },
     players: players.map(toPublicPlayer),
     me: player ? toPublicPlayer(player) : null,
@@ -547,5 +640,6 @@ export async function buildGameState(
     submissions,
     mySubmission,
     myVote,
+    recap,
   };
 }

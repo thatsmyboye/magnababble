@@ -1,12 +1,13 @@
 import { phaseDurationMs, type RoomMode } from "./phases";
+import type { RoomSettings } from "./settings";
 
 /** Longest a single round can take, in milliseconds, if every timer runs out. */
-export function maxRoundMs(freestyle: boolean): number {
+export function maxRoundMs(freestyle: boolean, settings?: RoomSettings | null): number {
   return (
-    phaseDurationMs("prompt", freestyle) +
-    phaseDurationMs("submitting", freestyle) +
-    phaseDurationMs("voting", freestyle) +
-    phaseDurationMs("results", freestyle)
+    phaseDurationMs("prompt", freestyle, settings) +
+    phaseDurationMs("submitting", freestyle, settings) +
+    phaseDurationMs("voting", freestyle, settings) +
+    phaseDurationMs("results", freestyle, settings)
   );
 }
 
@@ -14,9 +15,13 @@ export function maxRoundMs(freestyle: boolean): number {
  * Upper bound on game length in whole minutes. Rounds usually finish
  * sooner because submitting and voting close early once everyone is done.
  */
-export function estimateGameMinutes(rounds: number, mode: RoomMode): number {
-  const framed = maxRoundMs(false);
-  const free = maxRoundMs(true);
+export function estimateGameMinutes(
+  rounds: number,
+  mode: RoomMode,
+  settings?: RoomSettings | null
+): number {
+  const framed = maxRoundMs(false, settings);
+  const free = maxRoundMs(true, settings);
   let total: number;
   if (mode === "frames") total = rounds * framed;
   else if (mode === "freestyle") total = rounds * free;

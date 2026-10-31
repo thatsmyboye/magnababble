@@ -9,6 +9,8 @@ import { ROUND_OPTIONS } from "@/lib/game/engine-constants";
 import { estimateGameMinutes } from "@/lib/game/estimate";
 import { MODE_LABELS, ROOM_MODES, type RoomMode } from "@/lib/game/phases";
 import { readRememberedName, rememberName, storeCredentials } from "@/lib/hooks/useRoom";
+import type { RoomSettings } from "@/lib/game/settings";
+import { HouseRules } from "@/components/home/HouseRules";
 import { cn } from "@/lib/utils";
 
 export function CreateRoom() {
@@ -16,6 +18,7 @@ export function CreateRoom() {
   const [name, setName] = useState("");
   const [rounds, setRounds] = useState(5);
   const [mode, setMode] = useState<RoomMode>("mixed");
+  const [settings, setSettings] = useState<RoomSettings>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -36,7 +39,7 @@ export function CreateRoom() {
         code: string;
         playerId: string;
         playerToken: string;
-      }>("/api/rooms", { body: { hostName: name.trim(), roundCount: rounds, mode } });
+      }>("/api/rooms", { body: { hostName: name.trim(), roundCount: rounds, mode, settings } });
 
       rememberName(name);
       storeCredentials(code, playerId, playerToken);
@@ -84,7 +87,7 @@ export function CreateRoom() {
           ))}
         </div>
         <p className="text-white/40 text-xs mt-1.5" aria-live="polite">
-          Up to about {estimateGameMinutes(rounds, mode)} minutes · rounds end early once everyone is done
+          Up to about {estimateGameMinutes(rounds, mode, settings)} minutes · rounds end early once everyone is done
         </p>
       </div>
 
@@ -109,6 +112,8 @@ export function CreateRoom() {
           ))}
         </div>
       </div>
+
+      <HouseRules value={settings} mode={mode} onChange={setSettings} />
 
       {error && <p className="text-red-400 text-sm">{error}</p>}
       <Button type="submit" size="lg" className="w-full" disabled={loading}>

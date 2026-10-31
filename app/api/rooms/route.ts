@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { MAX_ROUNDS, MIN_ROUNDS } from "@/lib/game/engine";
+import { recordEvent } from "@/lib/game/events";
 import { isRoomMode, type RoomMode } from "@/lib/game/phases";
+import { sanitizeSettings } from "@/lib/game/settings";
 import { getServiceClient } from "@/lib/supabase/service";
 import { generateRoomCode, generateToken } from "@/lib/utils";
 import { cleanName, handleRouteError, jsonError, readJson } from "@/lib/api/helpers";
@@ -11,6 +13,7 @@ interface CreateBody {
   hostName: string;
   roundCount: number;
   mode: RoomMode;
+  settings: unknown;
 }
 
 export async function POST(request: Request) {
@@ -26,6 +29,7 @@ export async function POST(request: Request) {
     }
 
     const mode: RoomMode = isRoomMode(body.mode) ? body.mode : "mixed";
+    const settings = sanitizeSettings(body.settings);
 
     const sb = getServiceClient();
     const hostToken = generateToken();
@@ -37,7 +41,7 @@ export async function POST(request: Request) {
       const code = generateRoomCode();
       const { data, error } = await sb
         .from("rooms")
-        .insert({ code, host_token: hostToken, round_count: roundCount, mode })
+        .insert({ code, host_token: hostToken, round_count: roundCount, mode, settings })
         .select("id, code")
         .single();
       if (!error && data) {
@@ -54,6 +58,11 @@ export async function POST(request: Request) {
       .select("id")
       .single();
     if (playerError) throw playerError;
+
+    await recordEvent(sb, room, "room_created", {
+      playerCount: 1,
+      extra: { mode, rounds: roundCount, settings },
+    });
 
     return NextResponse.json({ code: room.code, playerId: player.id, playerToken });
   } catch (err) {

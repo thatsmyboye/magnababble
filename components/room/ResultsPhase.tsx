@@ -7,7 +7,6 @@ import { PlayerList } from "@/components/ui/player-list";
 import { PhaseHeader } from "@/components/ui/phase-header";
 import { Sentence } from "@/components/ui/sentence";
 import { useElapsed } from "@/lib/hooks/useElapsed";
-import { phaseDurationMs } from "@/lib/game/phases";
 import { cn } from "@/lib/utils";
 import type { PlayerPublic, RoundPublic, SubmissionPublic } from "@/lib/game/types";
 
@@ -44,7 +43,7 @@ export function ResultsPhase({
 
   // The phase clock is shared, so every player sees the same reveal timing,
   // and a late refresh lands on the finished state instead of restarting.
-  const duration = phaseDurationMs("results", round.freestyle);
+  const duration = round.phase_duration_ms;
   const startIso = round.phase_ends_at
     ? new Date(new Date(round.phase_ends_at).getTime() - duration).toISOString()
     : null;

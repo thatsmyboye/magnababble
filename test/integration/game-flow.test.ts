@@ -29,6 +29,8 @@ import * as nextRoute from "@/app/api/rooms/[code]/next/route";
 import * as rematchRoute from "@/app/api/rooms/[code]/rematch/route";
 import * as submitRoute from "@/app/api/rounds/[id]/submit/route";
 import * as voteRoute from "@/app/api/rounds/[id]/vote/route";
+import * as themesRoute from "@/app/api/themes/route";
+import * as recapImageRoute from "@/app/api/rooms/[code]/recap-image/route";
 
 /** Any route handler: `never` params make every concrete handler assignable. */
 type Handler = (req: Request, ctx: { params: Promise<never> }) => Promise<Response>;
@@ -108,6 +110,23 @@ async function vote(s: Session, roundId: string, submissionId: string) {
 }
 
 /** Force the current phase deadline into the past so non-hosts may advance. */
+async function events(code: string): Promise<{ event: string; player_count: number | null }[]> {
+  const { rows } = await pool!.query(
+    "SELECT event, player_count FROM game_events WHERE room_code = $1 ORDER BY id",
+    [code]
+  );
+  return rows;
+}
+
+/** Seconds between now and the round's phase deadline. */
+async function secondsLeft(roundId: string): Promise<number> {
+  const { rows } = await pool!.query(
+    "SELECT extract(epoch FROM phase_ends_at - now())::float AS s FROM rounds WHERE id = $1",
+    [roundId]
+  );
+  return rows[0].s;
+}
+
 async function expirePhase(roundId: string) {
   await pool!.query("UPDATE rounds SET phase_ends_at = now() - interval '5 seconds' WHERE id = $1", [roundId]);
 }
@@ -342,5 +361,148 @@ describe.skipIf(!DATABASE_URL)("game flow (integration)", () => {
     expect(s.json.room.mode).toBe("mixed");
     expect(s.json.room.round_count).toBe(5);
     expect((await call(roomRoute.GET, { code: "ZZZZ" })).status).toBe(404);
+  });
+
+  it("applies house rules: custom timers and a theme filter", async () => {
+    const themes = await call<{ themes: { theme: string; framed: number; freestyle: number }[] }>(themesRoute.GET, {});
+    expect(themes.status).toBe(200);
+    const food = themes.json.themes.find((t) => t.theme === "Food");
+    expect(food && food.framed > 0 && food.freestyle > 0).toBe(true);
+
+    // Invalid values are dropped; defaults are not stored.
+    const host = await call<{ code: string; playerToken: string; playerId: string }>(roomsRoute.POST, {}, {
+      body: {
+        hostName: "Host",
+        roundCount: 2,
+        mode: "mixed",
+        settings: { submitSeconds: 45, voteSeconds: 20, themes: ["Food", "Food", " "], bogus: 1 },
+      },
+    });
+    expect(host.status).toBe(200);
+    const h: Session = { code: host.json.code, token: host.json.playerToken, playerId: host.json.playerId };
+    const g = await join(h.code, "Guest");
+
+    let s = await state(h);
+    expect(s.room.settings).toEqual({ submitSeconds: 45, voteSeconds: 20, themes: ["Food"] });
+
+    await call(startRoute.POST, { code: h.code }, { token: h.token, body: {} });
+    s = await state(h);
+    expect(s.round?.prompt.theme).toBe("Food"); // theme filter
+    expect(s.round?.freestyle).toBe(false); // mixed starts framed
+
+    await next(h, { phase: "prompt" });
+    const writeLeft = await secondsLeft(s.round!.id);
+    expect(writeLeft).toBeGreaterThan(40);
+    expect(writeLeft).toBeLessThanOrEqual(45.5); // 45s, not the default 60s
+
+    const r1 = s.round!.id;
+    const hHand = (await state(h)).hand;
+    const gHand = (await state(g)).hand;
+    const slots = (s.round!.prompt.sentence_frame.match(/__/g) ?? []).length;
+    await submit(h, r1, hHand.slice(0, slots).map((t) => t.word));
+    await submit(g, r1, gHand.slice(0, slots).map((t) => t.word));
+    expect((await state(h)).round?.phase).toBe("voting");
+    const voteLeft = await secondsLeft(r1);
+    expect(voteLeft).toBeGreaterThan(15);
+    expect(voteLeft).toBeLessThanOrEqual(20.5); // 20s, not 30s
+
+    // Round 2 of mixed is freestyle: 45s * 1.5 = 68s to write.
+    const hSub = (await state(h)).submissions.find((x) => x.is_mine)!.id;
+    const gSub = (await state(g)).submissions.find((x) => x.is_mine)!.id;
+    await vote(h, r1, gSub);
+    await vote(g, r1, hSub);
+    await next(h, { phase: "results" });
+    s = await state(h);
+    expect(s.round?.round_number).toBe(2);
+    expect(s.round?.freestyle).toBe(true);
+    expect(s.round?.prompt.theme).toBe("Food");
+    await next(h, { phase: "prompt" });
+    const freeLeft = await secondsLeft(s.round!.id);
+    expect(freeLeft).toBeGreaterThan(63);
+    expect(freeLeft).toBeLessThanOrEqual(68.5);
+  });
+
+  it("records funnel events and builds an end-of-game recap", async () => {
+    const a = await createRoom("Ann", 2, "frames");
+    expect(await events(a.code)).toEqual([{ event: "room_created", player_count: 1 }]);
+    const b = await join(a.code, "Bob");
+    const c = await join(a.code, "Cat");
+    await call(startRoute.POST, { code: a.code }, { token: a.token, body: {} });
+
+    // No recap or image while the game is running.
+    expect((await state(a)).recap).toBeNull();
+    expect((await call(recapImageRoute.GET, { code: a.code })).status).toBe(404);
+
+    const playRound = async (votesFor: (subs: Record<string, string>) => [Session, string][]) => {
+      let s = await state(a);
+      const roundId = s.round!.id;
+      await next(a, { phase: "prompt" });
+      const slots = (s.round!.prompt.sentence_frame.match(/__/g) ?? []).length;
+      for (const p of [a, b, c]) {
+        const hand = (await state(p)).hand;
+        await submit(p, roundId, hand.slice(0, slots).map((t) => t.word));
+      }
+      const subs: Record<string, string> = {};
+      for (const p of [a, b, c]) subs[p.playerId] = (await state(p)).submissions.find((x) => x.is_mine)!.id;
+      for (const [voter, subId] of votesFor(subs)) await vote(voter, roundId, subId);
+      s = await state(a);
+      expect(s.round?.phase).toBe("results");
+      await next(a, { phase: "results" });
+    };
+
+    // Round 1: Bob gets 2 votes. Round 2: tie between Ann and Cat (1 each), Bob 1.
+    await playRound((subs) => [
+      [a, subs[b.playerId]],
+      [c, subs[b.playerId]],
+      [b, subs[a.playerId]],
+    ]);
+    await playRound((subs) => [
+      [a, subs[c.playerId]],
+      [b, subs[a.playerId]],
+      [c, subs[b.playerId]],
+    ]);
+
+    const s = await state(c);
+    expect(s.room.status).toBe("finished");
+    expect(s.recap).not.toBeNull();
+    const recap = s.recap!;
+    expect(recap.rounds.map((r) => r.round_number)).toEqual([1, 2]);
+    expect(recap.rounds[0].winners).toHaveLength(1);
+    expect(recap.rounds[0].winners[0].player_name).toBe("Bob");
+    expect(recap.rounds[0].winners[0].votes).toBe(2);
+    expect(recap.rounds[1].winners).toHaveLength(3); // three-way tie on 1 vote
+    expect(recap.best?.player_name).toBe("Bob");
+    expect(recap.best?.round_number).toBe(1);
+
+    // The image body is binary, so call the handler directly rather than via call().
+    const raw = await recapImageRoute.GET(new Request("http://test.local/"), {
+      params: Promise.resolve({ code: a.code }),
+    });
+    expect(raw.status).toBe(200);
+    expect(raw.headers.get("content-type")).toBe("image/png");
+    const bytes = new Uint8Array(await raw.arrayBuffer());
+    expect(bytes.length).toBeGreaterThan(5_000);
+    expect(Array.from(bytes.slice(1, 4)).map((x) => String.fromCharCode(x)).join("")).toBe("PNG");
+
+    // Rematch clears the recap and logs the event.
+    await call(rematchRoute.POST, { code: a.code }, { token: a.token, body: {} });
+    expect((await state(a)).recap).toBeNull();
+
+    expect(await events(a.code)).toEqual([
+      { event: "room_created", player_count: 1 },
+      { event: "player_joined", player_count: 2 },
+      { event: "player_joined", player_count: 3 },
+      { event: "game_started", player_count: 3 },
+      { event: "game_finished", player_count: 3 },
+      { event: "rematch", player_count: 3 },
+    ]);
+
+    // Funnel rows survive stale-room cleanup.
+    await pool!.query("DELETE FROM rooms WHERE code = $1", [a.code]);
+    const { rows } = await pool!.query(
+      "SELECT reached_two_players, started, finished, rematches FROM room_funnel WHERE room_code = $1",
+      [a.code]
+    );
+    expect(rows).toEqual([{ reached_two_players: true, started: true, finished: true, rematches: "1" }]);
   });
 });

@@ -10,6 +10,7 @@ import { PlayerList } from "@/components/ui/player-list";
 import { api } from "@/lib/api/client";
 import { MAX_PLAYERS, MIN_PLAYERS } from "@/lib/game/engine-constants";
 import { MODE_LABELS, type RoomMode } from "@/lib/game/phases";
+import { describeSettings, type RoomSettings } from "@/lib/game/settings";
 import type { PlayerPublic } from "@/lib/game/types";
 
 const TOAST_MS = 2_600;
@@ -30,6 +31,7 @@ interface LobbyProps {
   token: string | null;
   roundCount: number;
   mode: RoomMode;
+  settings: RoomSettings;
   onStarted: () => void;
 }
 
@@ -41,6 +43,7 @@ export function Lobby({
   token,
   roundCount,
   mode,
+  settings,
   onStarted,
 }: LobbyProps) {
   const [starting, setStarting] = useState(false);
@@ -124,7 +127,7 @@ export function Lobby({
         Magna<span className="text-violet-400">babble</span>
       </h1>
       <p className="text-white/50 text-sm mb-8">
-        {roundCount} {roundCount === 1 ? "round" : "rounds"} · {MODE_LABELS[mode].title}
+        {[`${roundCount} ${roundCount === 1 ? "round" : "rounds"}`, MODE_LABELS[mode].title, ...describeSettings(settings)].join(" · ")}
       </p>
 
       <div className="w-full max-w-md grid gap-4 md:grid-cols-[1fr_auto] items-stretch mb-4">

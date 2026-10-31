@@ -1,4 +1,5 @@
 import type { RoomMode, RoomStatus, RoundPhase } from "./phases";
+import type { RoomSettings } from "./settings";
 
 /** Shapes shared between the API routes and the client. */
 
@@ -9,6 +10,7 @@ export interface RoomPublic {
   round_count: number;
   current_round: number;
   mode: RoomMode;
+  settings: RoomSettings;
 }
 
 export interface PlayerPublic {
@@ -30,6 +32,8 @@ export interface RoundPublic {
   round_number: number;
   phase: RoundPhase;
   phase_ends_at: string | null;
+  /** Full length of the current phase, honoring the room's house rules. */
+  phase_duration_ms: number;
   prompt: PromptPublic;
   /** True when the prompt has no blanks and players compose freely. */
   freestyle: boolean;
@@ -64,4 +68,30 @@ export interface GameState {
   mySubmission: { id: string; placement: string[]; rendered_text: string } | null;
   /** Submission id this player voted for in the current round. */
   myVote: string | null;
+  /** End-of-game highlights; only present once the room is finished. */
+  recap: Recap | null;
+}
+
+export interface RecapEntry {
+  round_number: number;
+  theme: string;
+  prompt: string;
+  text: string;
+  votes: number;
+  player_id: string;
+  player_name: string;
+}
+
+export interface RecapRound {
+  round_number: number;
+  theme: string;
+  prompt: string;
+  /** Highest-voted entries; several when tied, empty when nobody got a vote. */
+  winners: RecapEntry[];
+}
+
+export interface Recap {
+  rounds: RecapRound[];
+  /** The single most-voted sentence of the game (earliest round wins ties). */
+  best: RecapEntry | null;
 }

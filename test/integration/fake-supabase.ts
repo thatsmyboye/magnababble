@@ -7,7 +7,7 @@
 import { Pool } from "pg";
 
 type Row = Record<string, unknown>;
-type Filter = { col: string; op: "=" | ">"; value: unknown };
+type Filter = { col: string; op: "=" | ">" | "in"; value: unknown };
 
 /** Embedded resources: (table, alias) -> join target. */
 const EMBEDS: Record<string, Record<string, { table: string; fk: string }>> = {
@@ -88,6 +88,10 @@ class FakeBuilder implements PromiseLike<Result> {
     this.filters.push({ col, op: "=", value });
     return this;
   }
+  in(col: string, values: unknown[]) {
+    this.filters.push({ col, op: "in", value: values });
+    return this;
+  }
   gt(col: string, value: unknown) {
     this.filters.push({ col, op: ">", value });
     return this;
@@ -130,6 +134,7 @@ class FakeBuilder implements PromiseLike<Result> {
     if (this.filters.length === 0) return "";
     const clauses = this.filters.map((f) => {
       params.push(f.value);
+      if (f.op === "in") return `"${f.col}" = ANY($${params.length})`;
       return `"${f.col}" ${f.op} $${params.length}`;
     });
     return ` WHERE ${clauses.join(" AND ")}`;

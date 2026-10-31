@@ -16,6 +16,10 @@ A real-time multiplayer word-tile party game, rebooting the spirit of the old we
 
 Games support 2 to 10 players and 1 to 15 rounds. When creating a game the host picks the style: **Fill the blanks**, **Freestyle**, or **Mixed** (alternates between the two).
 
+Under **Advanced**, the host can set house rules: how long players get to write (30 to 120 seconds; freestyle rounds get 50% more) and to vote (15 to 45 seconds), and which prompt themes to use. The lobby lists any rules that differ from the defaults.
+
+During voting and results everyone can send emoji reactions, which float up on every screen. When the game ends, the final scoreboard shows the best sentence of the night and every round's winner, with a button to share the recap as an image.
+
 ## Stack
 
 - **Next.js 15** (App Router, TypeScript, route handlers)
@@ -51,7 +55,10 @@ supabase/migrations/002_seed_content.sql
 supabase/migrations/003_functions.sql
 supabase/migrations/004_expanded_content.sql
 supabase/migrations/005_freestyle_realtime_security.sql
+supabase/migrations/006_house_rules_events.sql
 ```
+
+If the Supabase GitHub integration is connected, it applies new migrations automatically when they merge to main.
 
 Migration 005 matters even for existing projects: it adds the game tables to the Realtime publication (without it, non-host players never see phase changes), adds room modes and freestyle content, and hides tokens, authorship and hands from the public anon key.
 
@@ -98,7 +105,7 @@ app/
     rounds/[id]/            # submit, vote
 
 components/
-  home/                     # CreateRoom, JoinRoom, QuickJoin, HeroDemo, HowItWorks
+  home/                     # CreateRoom, HouseRules, JoinRoom, QuickJoin, HeroDemo, HowItWorks
   room/                     # Lobby, JoinInPlace, one component per phase, FinalScoreboard
   tiles/                    # Tile, TileHand, SentenceFrame, FrameComposer, FreestyleComposer
   ui/                       # Button, Input, Timer, PlayerList, Avatar, PhaseHeader, Sentence, CountUp
@@ -185,6 +192,22 @@ MAGNA_TEST_DATABASE_URL=postgres://postgres@localhost:5432/magna npm test
 ```
 
 The same database can back the UI without a Supabase project: start the dev server with `MAGNA_FAKE_DB=1` and `MAGNA_TEST_DATABASE_URL` set (plus any placeholder values for the `NEXT_PUBLIC_SUPABASE_*` variables). Realtime is unavailable in that setup, so clients rely on the polling fallback.
+
+## Funnel events
+
+Migration 006 adds a `game_events` table that the API routes append to: room created, player joined, game started, game finished and rematch. It has no link to `rooms`, so it survives stale-room cleanup, and the public key can't read it. The `room_funnel` view summarizes one row per room. For example, to see how many rooms got a second player, started and finished:
+
+```sql
+SELECT count(*) AS rooms,
+       count(*) FILTER (WHERE reached_two_players) AS got_second_player,
+       count(*) FILTER (WHERE started)  AS started,
+       count(*) FILTER (WHERE finished) AS finished
+FROM room_funnel;
+```
+
+## Reactions and Realtime
+
+Emoji reactions use Supabase Realtime broadcast on a `reactions:<room code>` channel. Messages go directly between browsers and are never stored. This works with Supabase's default Realtime settings; if the project is switched to private channels only, reactions stop arriving while the rest of the game keeps working. In local development with `MAGNA_FAKE_DB=1`, reactions use the browser's own broadcast channel instead, so they only reach other tabs in the same browser.
 
 ## Housekeeping
 
