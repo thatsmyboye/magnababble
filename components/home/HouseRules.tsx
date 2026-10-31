@@ -25,6 +25,44 @@ interface HouseRulesProps {
   onChange: (next: RoomSettings) => void;
 }
 
+function Switch({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="w-full flex items-start gap-3 text-left rounded-lg px-1 py-1 hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "relative mt-0.5 inline-block w-9 h-5 shrink-0 rounded-full transition-colors",
+          checked ? "bg-violet-500" : "bg-white/20"
+        )}
+      >
+        <span
+          className={cn("absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all", checked ? "left-[18px]" : "left-0.5")}
+        />
+      </span>
+      <span>
+        <span className="block text-sm text-white font-semibold">{label}</span>
+        <span className="block text-xs text-white/50">{description}</span>
+      </span>
+    </button>
+  );
+}
+
 function Segmented({
   label,
   options,
@@ -86,6 +124,8 @@ export function HouseRules({ value, mode, onChange }: HouseRulesProps) {
     if (next.submitSeconds === DEFAULT_SUBMIT_SECONDS) delete next.submitSeconds;
     if (next.voteSeconds === DEFAULT_VOTE_SECONDS) delete next.voteSeconds;
     if (next.themes && next.themes.length === 0) delete next.themes;
+    if (!next.specialRounds) delete next.specialRounds;
+    if (!next.familyFriendly) delete next.familyFriendly;
     onChange(next);
   }
 
@@ -150,6 +190,21 @@ export function HouseRules({ value, mode, onChange }: HouseRulesProps) {
                   value={vote}
                   onSelect={(n) => set({ voteSeconds: n })}
                   format={(n) => `${n}s`}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Switch
+                  label="Special rounds"
+                  description="Surprise speed and chaos rounds, and a double-points finale."
+                  checked={Boolean(value.specialRounds)}
+                  onChange={(on) => set({ specialRounds: on })}
+                />
+                <Switch
+                  label="Family-friendly"
+                  description="Leaves out dating prompts and a few edgier words."
+                  checked={Boolean(value.familyFriendly)}
+                  onChange={(on) => set({ familyFriendly: on })}
                 />
               </div>
 

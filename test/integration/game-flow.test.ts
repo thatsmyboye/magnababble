@@ -505,4 +505,168 @@ describe.skipIf(!DATABASE_URL)("game flow (integration)", () => {
     );
     expect(rows).toEqual([{ reached_two_players: true, started: true, finished: true, rematches: "1" }]);
   });
+
+  it("keeps content consistent: every framed prompt has one valid hint per blank", async () => {
+    const { rows } = await pool!.query(
+      "SELECT sentence_frame, slot_hints FROM prompts WHERE sentence_frame <> ''"
+    );
+    expect(rows.length).toBeGreaterThan(70);
+    const valid = new Set(["noun", "verb", "adjective", "adverb", "filler"]);
+    for (const r of rows) {
+      const slots = (r.sentence_frame.match(/__/g) ?? []).length;
+      expect(r.slot_hints, r.sentence_frame).not.toBeNull();
+      expect(r.slot_hints.length, r.sentence_frame).toBe(slots);
+      for (const h of r.slot_hints) expect(valid.has(h), `${h} in ${r.sentence_frame}`).toBe(true);
+    }
+    const spooky = await pool!.query(
+      "SELECT category, count(*)::int AS n FROM tiles WHERE tile_set_id = '00000000-0000-0000-0000-000000000002' GROUP BY 1"
+    );
+    for (const r of spooky.rows) expect(r.n).toBeGreaterThanOrEqual(6);
+  });
+
+  /** Advance the host's room through one round with nobody submitting. */
+  async function skipRound(h: Session) {
+    await next(h, { phase: "prompt" });
+    await next(h, { phase: "submitting" }); // no entries: straight to results
+    await next(h, { phase: "results" });
+  }
+
+  it("family-friendly rooms never deal flagged prompts or tiles", async () => {
+    const host = await call<{ code: string; playerToken: string; playerId: string }>(roomsRoute.POST, {}, {
+      body: { hostName: "Host", roundCount: 15, mode: "frames", settings: { familyFriendly: true, themes: ["Dating"] } },
+    });
+    const h: Session = { code: host.json.code, token: host.json.playerToken, playerId: host.json.playerId };
+    await join(h.code, "Guest");
+    await call(startRoute.POST, { code: h.code }, { token: h.token, body: {} });
+
+    const themes = new Set<string>();
+    for (let i = 0; i < 15; i++) {
+      const s = await state(h);
+      themes.add(s.round!.prompt.theme);
+      if (i < 14) await skipRound(h);
+    }
+    expect(themes.has("Dating")).toBe(false); // the only chosen theme is filtered out entirely
+
+    const { rows } = await pool!.query(
+      `SELECT count(*)::int AS dealt, count(*) FILTER (WHERE NOT t.family_friendly)::int AS flagged
+       FROM player_hands ph JOIN tiles t ON t.id = ph.tile_id
+       JOIN rounds r ON r.id = ph.round_id JOIN rooms ro ON ro.id = r.room_id
+       WHERE ro.code = $1`,
+      [h.code]
+    );
+    expect(rows[0].dealt).toBeGreaterThan(250);
+    expect(rows[0].flagged).toBe(0);
+  });
+
+  it("plays special rounds: double final, chaos blank, speed timer", async () => {
+    const host = await call<{ code: string; playerToken: string; playerId: string }>(roomsRoute.POST, {}, {
+      body: { hostName: "Host", roundCount: 4, mode: "frames", settings: { specialRounds: true } },
+    });
+    const h: Session = { code: host.json.code, token: host.json.playerToken, playerId: host.json.playerId };
+    const g = await join(h.code, "Guest");
+    await call(startRoute.POST, { code: h.code }, { token: h.token, body: {} });
+
+    let s = await state(h);
+    expect(s.round?.modifier).toBeNull(); // round one is always normal
+    expect(s.room.settings.specialRounds).toBe(true);
+
+    // Round 2: force chaos to check the extra blank end to end.
+    await skipRound(h);
+    s = await state(h);
+    await pool!.query("UPDATE rounds SET modifier = 'chaos' WHERE id = $1", [s.round!.id]);
+    s = await state(h);
+    const slots = (s.round!.prompt.sentence_frame.match(/__/g) ?? []).length;
+    expect(s.round?.modifier).toBe("chaos");
+    expect(s.round!.prompt.slot_hints).toHaveLength(slots);
+    expect(s.round!.prompt.slot_hints![slots - 1]).toBe("filler");
+    await next(h, { phase: "prompt" });
+    const words = s.hand.map((t) => t.word);
+    expect((await submit(h, s.round!.id, words.slice(0, slots - 1))).status).toBe(400);
+    const ok = await submit(h, s.round!.id, words.slice(0, slots));
+    expect(ok.status).toBe(200);
+    await next(h, { phase: "submitting" });
+    await next(h, { phase: "results" });
+
+    // Round 3: force speed and check the shortened writing deadline.
+    s = await state(h);
+    expect(s.round?.round_number).toBe(3);
+    await pool!.query("UPDATE rounds SET modifier = 'speed' WHERE id = $1", [s.round!.id]);
+    await next(h, { phase: "prompt" });
+    const left = await secondsLeft(s.round!.id);
+    expect(left).toBeGreaterThan(25);
+    expect(left).toBeLessThanOrEqual(30.5);
+    s = await state(h);
+    expect(s.round?.phase_duration_ms).toBe(30_000);
+    await next(h, { phase: "submitting" });
+    await next(h, { phase: "results" });
+
+    // Round 4 (final of 4): double points, applied to the score.
+    s = await state(h);
+    expect(s.round?.round_number).toBe(4);
+    expect(s.round?.modifier).toBe("double");
+    const scoreBefore = s.players.find((p) => p.id === g.playerId)!.score;
+    await next(h, { phase: "prompt" });
+    const fslots = (s.round!.prompt.sentence_frame.match(/__/g) ?? []).length;
+    await submit(h, s.round!.id, (await state(h)).hand.slice(0, fslots).map((t) => t.word));
+    await submit(g, s.round!.id, (await state(g)).hand.slice(0, fslots).map((t) => t.word));
+    const gSub = (await state(g)).submissions.find((x) => x.is_mine)!.id;
+    await vote(h, s.round!.id, gSub);
+    s = await state(h);
+    expect(s.round?.phase).toBe("voting"); // guest hasn't voted
+    const hSub = (await state(h)).submissions.find((x) => x.is_mine)!.id;
+    await vote(g, s.round!.id, hSub);
+    s = await state(h);
+    expect(s.round?.phase).toBe("results");
+    expect(s.players.find((p) => p.id === g.playerId)!.score - scoreBefore).toBe(2); // one vote, doubled
+
+  });
+
+  it("chooses special rounds naturally: normal opener, double final, never back to back", async () => {
+    const host = await call<{ code: string; playerToken: string; playerId: string }>(roomsRoute.POST, {}, {
+      body: { hostName: "Host", roundCount: 15, mode: "mixed", settings: { specialRounds: true } },
+    });
+    const h: Session = { code: host.json.code, token: host.json.playerToken, playerId: host.json.playerId };
+    await join(h.code, "Guest");
+    await call(startRoute.POST, { code: h.code }, { token: h.token, body: {} });
+    for (let i = 0; i < 14; i++) await skipRound(h);
+
+    const { rows } = await pool!.query(
+      `SELECT r.round_number, r.modifier, p.sentence_frame = '' AS freestyle
+       FROM rounds r JOIN rooms ro ON ro.id = r.room_id JOIN prompts p ON p.id = r.prompt_id
+       WHERE ro.code = $1 ORDER BY r.round_number`,
+      [h.code]
+    );
+    expect(rows).toHaveLength(15);
+    expect(rows[0].modifier).toBeNull();
+    expect(rows[14].modifier).toBe("double");
+    expect(rows[13].modifier).toBeNull();
+    for (let i = 1; i < rows.length; i++) {
+      expect(Boolean(rows[i].modifier && rows[i - 1].modifier), `rounds ${i} and ${i + 1}`).toBe(false);
+      if (rows[i].freestyle) expect(rows[i].modifier).not.toBe("chaos");
+    }
+  });
+
+  it("deals from the Spooky pack, mixed with the main tiles", async () => {
+    for (const mode of ["frames", "freestyle"] as const) {
+      const host = await call<{ code: string; playerToken: string; playerId: string }>(roomsRoute.POST, {}, {
+        body: { hostName: "Host", roundCount: 1, mode, settings: { themes: ["Spooky"] } },
+      });
+      const h: Session = { code: host.json.code, token: host.json.playerToken, playerId: host.json.playerId };
+      await join(h.code, "Guest");
+      await call(startRoute.POST, { code: h.code }, { token: h.token, body: {} });
+      const s = await state(h);
+      expect(s.round?.prompt.theme).toBe("Spooky");
+      const { rows } = await pool!.query("SELECT id FROM tiles WHERE tile_set_id = '00000000-0000-0000-0000-000000000002'");
+      const spookyIds = new Set(rows.map((r) => r.id));
+      const fromPack = s.hand.filter((t) => spookyIds.has(t.id)).length;
+      expect(fromPack, mode).toBeGreaterThanOrEqual(Math.ceil((mode === "frames" ? s.hand.length : 12) / 2));
+      if (mode === "frames") {
+        const cats = new Map<string, number>();
+        for (const t of s.hand) cats.set(t.category, (cats.get(t.category) ?? 0) + 1);
+        for (const hint of s.round!.prompt.slot_hints ?? []) expect(cats.get(hint!) ?? 0, hint!).toBeGreaterThan(0);
+      } else {
+        expect(s.hand.filter((t) => t.category === "glue")).toHaveLength(10);
+      }
+    }
+  });
 });

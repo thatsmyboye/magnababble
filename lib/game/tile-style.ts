@@ -31,3 +31,28 @@ export function tileCategoryLabel(category: string): string {
 export const TILE_BASE_CLASS =
   "inline-flex items-center min-h-[44px] px-3.5 py-2 rounded-xl border-2 text-white text-base font-semibold select-none touch-manipulation shadow-sm shadow-black/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-indigo-950";
 
+
+/** Slot hints: a tinted dashed border and a small label in the category's color. */
+const HINT_STYLES: Record<string, string> = {
+  noun: "border-blue-400/60 text-blue-300",
+  verb: "border-emerald-400/60 text-emerald-300",
+  adjective: "border-amber-400/60 text-amber-300",
+  adverb: "border-rose-400/60 text-rose-300",
+  filler: "border-purple-400/60 text-purple-300",
+};
+
+const HINT_LABELS: Record<string, string> = {
+  noun: "noun",
+  verb: "-ing verb",
+  adjective: "adjective",
+  adverb: "adverb",
+  filler: "phrase",
+};
+
+export function hintClass(hint: string | null | undefined): string | null {
+  return hint ? HINT_STYLES[hint] ?? null : null;
+}
+
+export function hintLabel(hint: string | null | undefined): string | null {
+  return hint ? HINT_LABELS[hint] ?? null : null;
+}

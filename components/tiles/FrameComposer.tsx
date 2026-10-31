@@ -13,6 +13,7 @@ import type { TileData } from "@/lib/game/types";
 
 interface FrameComposerProps {
   frame: string;
+  hints?: (string | null)[] | null;
   hand: TileData[];
   onSubmit: (words: string[]) => void;
   submitting: boolean;
@@ -20,7 +21,7 @@ interface FrameComposerProps {
 }
 
 /** Fill-in-the-blanks composer: drag tiles into slots, or tap tile then slot. */
-export function FrameComposer({ frame, hand, onSubmit, submitting, error }: FrameComposerProps) {
+export function FrameComposer({ frame, hints, hand, onSubmit, submitting, error }: FrameComposerProps) {
   const slotCount = countSlots(frame);
 
   // placements[slotIndex] = tile id or null
@@ -138,6 +139,7 @@ export function FrameComposer({ frame, hand, onSubmit, submitting, error }: Fram
           onSlotClick={handleSlotClick}
           selectedSlotIndex={selectedSlot}
           nextSlotIndex={allFilled ? null : nextEmpty}
+          hints={hints}
         />
       </div>
 

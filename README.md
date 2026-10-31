@@ -16,7 +16,7 @@ A real-time multiplayer word-tile party game, rebooting the spirit of the old we
 
 Games support 2 to 10 players and 1 to 15 rounds. When creating a game the host picks the style: **Fill the blanks**, **Freestyle**, or **Mixed** (alternates between the two).
 
-Under **Advanced**, the host can set house rules: how long players get to write (30 to 120 seconds; freestyle rounds get 50% more) and to vote (15 to 45 seconds), and which prompt themes to use. The lobby lists any rules that differ from the defaults.
+Under **Advanced**, the host can set house rules: how long players get to write (30 to 120 seconds; freestyle rounds get 50% more) and to vote (15 to 45 seconds), and which prompt themes to use. Two switches add **Special rounds** (the opener is always normal, the final round scores double, and some middle rounds become a speed round with half the writing time or a chaos round with one extra blank) and **Family-friendly** (leaves out dating prompts and a few edgier tiles). The lobby lists any rules that differ from the defaults.
 
 During voting and results everyone can send emoji reactions, which float up on every screen. When the game ends, the final scoreboard shows the best sentence of the night and every round's winner, with a button to share the recap as an image.
 
@@ -56,6 +56,7 @@ supabase/migrations/003_functions.sql
 supabase/migrations/004_expanded_content.sql
 supabase/migrations/005_freestyle_realtime_security.sql
 supabase/migrations/006_house_rules_events.sql
+supabase/migrations/007_special_rounds_hints_packs.sql
 ```
 
 If the Supabase GitHub integration is connected, it applies new migrations automatically when they merge to main.
@@ -93,6 +94,7 @@ Open http://localhost:3000. To simulate multiple players, open the room link in 
 | `npm run lint` | ESLint |
 | `npm run typecheck` | TypeScript only |
 | `npm test` | Unit tests, plus the integration test when a database is configured (below) |
+| `npm run content:sample` | Sample sentences and a problem report for every framed prompt |
 
 ## Project structure
 
@@ -169,9 +171,19 @@ About 70 framed prompts and 35 freestyle prompts across themes such as Office Li
 
 ## Adding content
 
-- **Framed prompt**: insert a row into `prompts` with `__` for each blank. Two to four blanks work best.
+Framed prompts carry **slot hints**: the kind of word each blank expects (`noun`, `verb`, `adjective`, `adverb` or `filler` for phrases). Blanks show the hint as a colored label, hands always include at least one tile of each hinted kind, and players can still place any tile. Every verb tile is an `-ing` word, so write frames where an `-ing` verb fits ("I was just __ the __", not "I __ the __").
+
+Themed **packs** are separate tile sets. A prompt with a pack's `tile_set_id` deals about half its tiles from the pack and the rest, plus glue words, from the main set. Migration 007 adds the Spooky pack as the first one.
+
+To review how prompts actually play, run the sampler against any database with the migrations applied. It deals real hands, fills them the way a quick player would, writes a few sample sentences per prompt, and lists structural problems (missing or mismatched hints, too few tiles for a hint):
+
+```
+DATABASE_URL=postgres://… npm run content:sample -- --theme Spooky --samples 5 --out samples.md
+```
+
+- **Framed prompt**: insert a row into `prompts` with `__` for each blank and a matching `slot_hints` array. Two to four blanks work best. Set `family_friendly = false` for anything you wouldn't play with kids.
 - **Freestyle prompt**: insert a row into `prompts` with an empty `sentence_frame`.
-- **Tiles**: insert into `tiles` with a category of `noun`, `verb`, `adjective`, `adverb`, `filler` or `glue`. New tile sets go in `tile_sets`; assign one to a prompt via `tile_set_id` for a themed word pool.
+- **Tiles**: insert into `tiles` with a category of `noun`, `verb`, `adjective`, `adverb`, `filler` or `glue`, and `family_friendly = false` where it applies. New packs go in `tile_sets`; give a pack at least six tiles per category and assign it to prompts via `tile_set_id`.
 
 ## Running the integration test
 

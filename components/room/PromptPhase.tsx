@@ -1,6 +1,10 @@
 "use client";
 
+import { motion } from "framer-motion";
 import { Timer } from "@/components/ui/timer";
+import { MODIFIER_STYLE } from "@/components/ui/modifier-badge";
+import { MODIFIER_INFO } from "@/lib/game/modifiers";
+import { cn } from "@/lib/utils";
 import type { RoundPublic } from "@/lib/game/types";
 
 interface PromptPhaseProps {
@@ -22,6 +26,25 @@ export function PromptPhase({ round, roundCount }: PromptPhaseProps) {
       </div>
 
       <div className="max-w-lg">
+        {round.modifier && (
+          <motion.div
+            initial={{ scale: 0.6, opacity: 0, rotate: -3 }}
+            animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            transition={{ type: "spring", stiffness: 280, damping: 14 }}
+            role="status"
+            className={cn(
+              "mx-auto mb-6 inline-flex flex-col items-center rounded-2xl border-2 px-6 py-3",
+              MODIFIER_STYLE[round.modifier].banner,
+              MODIFIER_STYLE[round.modifier].glow
+            )}
+          >
+            <span className="text-2xl font-black">
+              <span aria-hidden>{MODIFIER_INFO[round.modifier].icon} </span>
+              {MODIFIER_INFO[round.modifier].title}
+            </span>
+            <span className="text-sm opacity-80">{MODIFIER_INFO[round.modifier].blurb}</span>
+          </motion.div>
+        )}
         <p className="text-3xl font-bold text-white leading-snug mb-6">{prompt.display_text}</p>
 
         <div className="bg-white/5 border border-white/10 rounded-2xl px-6 py-4 mb-8">

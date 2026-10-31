@@ -1,5 +1,6 @@
 import type { RoomMode, RoomStatus, RoundPhase } from "./phases";
 import type { RoomSettings } from "./settings";
+import type { RoundModifier } from "./modifiers";
 
 /** Shapes shared between the API routes and the client. */
 
@@ -25,6 +26,8 @@ export interface PromptPublic {
   theme: string;
   display_text: string;
   sentence_frame: string;
+  /** Expected tile category per blank, or null for no hint. */
+  slot_hints: (string | null)[] | null;
 }
 
 export interface RoundPublic {
@@ -35,6 +38,8 @@ export interface RoundPublic {
   /** Full length of the current phase, honoring the room's house rules. */
   phase_duration_ms: number;
   prompt: PromptPublic;
+  /** Special round, when the room plays with special rounds. */
+  modifier: RoundModifier | null;
   /** True when the prompt has no blanks and players compose freely. */
   freestyle: boolean;
   submission_count: number;

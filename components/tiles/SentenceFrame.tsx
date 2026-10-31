@@ -3,6 +3,7 @@
 import { useDroppable } from "@dnd-kit/core";
 import { motion } from "framer-motion";
 import { tileColorClass } from "@/components/tiles/Tile";
+import { hintClass, hintLabel } from "@/lib/game/tile-style";
 import { tileLayoutId } from "@/components/tiles/TileHand";
 import { cn } from "@/lib/utils";
 import type { TileData } from "@/lib/game/types";
@@ -15,15 +16,18 @@ interface SlotProps {
   highlighted?: boolean;
   /** The blank the next tapped tile will land in. */
   isNext?: boolean;
+  /** Soft hint: the kind of word this blank expects. Any tile still fits. */
+  hint?: string | null;
 }
 
-function Slot({ slotIndex, slotCount, tile, onClick, highlighted, isNext }: SlotProps) {
+function Slot({ slotIndex, slotCount, tile, onClick, highlighted, isNext, hint }: SlotProps) {
   const { isOver, setNodeRef } = useDroppable({
     id: `slot-${slotIndex}`,
     data: { slotIndex },
   });
 
-  const position = `Blank ${slotIndex + 1} of ${slotCount}`;
+  const hintText = hintLabel(hint);
+  const position = `Blank ${slotIndex + 1} of ${slotCount}${hintText ? `, ${/^[aeiou]/.test(hintText) ? "an" : "a"} ${hintText} fits` : ""}`;
   const label = tile
     ? `${position}: ${tile.word}. Press to remove.`
     : highlighted || isNext
@@ -42,7 +46,7 @@ function Slot({ slotIndex, slotCount, tile, onClick, highlighted, isNext }: Slot
         "relative inline-flex items-center justify-center min-w-[96px] min-h-[44px] rounded-xl border-2 border-dashed mx-1 align-middle transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-indigo-950",
         tile
           ? "border-transparent p-0"
-          : "border-white/30 text-white/30 hover:border-white/50 hover:bg-white/5",
+          : cn("border-white/30 text-white/30 hover:border-white/50 hover:bg-white/5", hintClass(hint)),
         isNext && !tile && !highlighted && "border-violet-300 bg-violet-500/15 shadow-[0_0_16px_rgba(167,139,250,0.45)] animate-pulse",
         isOver && !tile && "border-violet-400 bg-violet-900/40 scale-105",
         highlighted && !tile && "border-yellow-400 bg-yellow-900/20 animate-pulse"
@@ -63,8 +67,8 @@ function Slot({ slotIndex, slotCount, tile, onClick, highlighted, isNext }: Slot
           </span>
         </motion.span>
       ) : (
-        <span aria-hidden className="px-3 text-sm tracking-widest">
-          ______
+        <span aria-hidden className={cn("px-3", hintText ? "text-xs font-semibold" : "text-sm tracking-widest")}>
+          {hintText ?? "______"}
         </span>
       )}
     </button>
@@ -77,6 +81,7 @@ interface SentenceFrameProps {
   onSlotClick?: (slotIndex: number) => void;
   selectedSlotIndex?: number | null;
   nextSlotIndex?: number | null;
+  hints?: (string | null)[] | null;
 }
 
 export function SentenceFrame({
@@ -85,6 +90,7 @@ export function SentenceFrame({
   onSlotClick,
   selectedSlotIndex,
   nextSlotIndex,
+  hints,
 }: SentenceFrameProps) {
   const parts = frame.split("__");
   const slotCount = parts.length - 1;
@@ -100,8 +106,13 @@ export function SentenceFrame({
         .split(/\s+/)
         .filter(Boolean)
         .forEach((word, j) => {
+          // Punctuation right after a blank ("__, condition") sits against it.
+          const hugsBlank = i > 0 && j === 0 && /^[,.;:!?)]/.test(part);
           elements.push(
-            <span key={`text-${i}-${j}`} className="text-white text-2xl font-semibold">
+            <span
+              key={`text-${i}-${j}`}
+              className={cn("text-white text-2xl font-semibold", hugsBlank && "-ml-2.5")}
+            >
               {word}
             </span>
           );
@@ -119,6 +130,7 @@ export function SentenceFrame({
           onClick={() => onSlotClick?.(idx)}
           highlighted={selectedSlotIndex === idx}
           isNext={nextSlotIndex === idx}
+          hint={hints?.[idx] ?? null}
         />
       );
       slotIndex++;

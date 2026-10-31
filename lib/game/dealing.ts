@@ -41,16 +41,65 @@ export function frameHandSize(slotCount: number): number {
   return slotCount + FRAME_EXTRA_TILES;
 }
 
+export interface DealOptions {
+  /** Expected category per blank (soft hints); the hand covers each one. */
+  hints?: (string | null)[] | null;
+  /** A themed pack's tiles. About half the content comes from here. */
+  themePool?: DealableTile[];
+}
+
 /**
- * Deal a hand for a framed round: round-robin across the content
- * categories so a player always has a spread of nouns, verbs, etc.
+ * Deal a hand for a framed round. Every hinted blank is guaranteed at least
+ * one tile of its category (from the theme pack when there is one), the
+ * rest is a balanced spread across categories, and a themed prompt draws
+ * about half its tiles from the pack.
  */
 export function dealFrameHand(
   pool: DealableTile[],
   slotCount: number,
-  rng: Rng = Math.random
+  rng: Rng = Math.random,
+  options: DealOptions = {}
 ): DealableTile[] {
-  return dealContent(pool, frameHandSize(slotCount), rng);
+  return dealMixed(pool, frameHandSize(slotCount), rng, options);
+}
+
+/** Content tiles honoring hints and an optional theme pack. */
+export function dealMixed(
+  pool: DealableTile[],
+  size: number,
+  rng: Rng = Math.random,
+  { hints, themePool = [] }: DealOptions = {}
+): DealableTile[] {
+  const chosen: DealableTile[] = [];
+  const taken = new Set<string>();
+  const take = (t: DealableTile) => {
+    chosen.push(t);
+    taken.add(t.id);
+  };
+
+  // 1. One tile per hinted blank, preferring the theme pack.
+  for (const hint of hints ?? []) {
+    if (!hint || !CONTENT_CATEGORIES.includes(hint as TileCategory) || chosen.length >= size) continue;
+    const fromTheme = shuffle(themePool.filter((t) => t.category === hint && !taken.has(t.id)), rng)[0];
+    const fromPool = shuffle(pool.filter((t) => t.category === hint && !taken.has(t.id)), rng)[0];
+    const pick = fromTheme ?? fromPool;
+    if (pick) take(pick);
+  }
+
+  // 2. Top up from the theme pack to about half the hand.
+  const themeIds = new Set(themePool.map((t) => t.id));
+  const themeSoFar = chosen.filter((t) => themeIds.has(t.id)).length;
+  const themeTarget = themePool.length > 0 ? Math.ceil(size / 2) - themeSoFar : 0;
+  if (themeTarget > 0) {
+    dealContent(themePool.filter((t) => !taken.has(t.id)), Math.min(themeTarget, size - chosen.length), rng).forEach(take);
+  }
+
+  // 3. Fill the rest with a balanced spread from the main pool.
+  if (chosen.length < size) {
+    dealContent(pool.filter((t) => !taken.has(t.id)), size - chosen.length, rng).forEach(take);
+  }
+
+  return shuffle(chosen, rng);
 }
 
 /**
@@ -97,9 +146,10 @@ export function dealFreestyleHand(
   pool: DealableTile[],
   rng: Rng = Math.random,
   contentCount = FREESTYLE_CONTENT_TILES,
-  glueCount = FREESTYLE_GLUE_TILES
+  glueCount = FREESTYLE_GLUE_TILES,
+  themePool: DealableTile[] = []
 ): DealableTile[] {
-  const content = dealContent(pool, contentCount, rng);
+  const content = dealMixed(pool, contentCount, rng, { themePool });
   const glue = shuffle(pool.filter((t) => t.category === "glue"), rng).slice(0, glueCount);
   // Keep glue words at the front so they are easy to find, content after.
   return [...sortByWord(glue), ...content];
