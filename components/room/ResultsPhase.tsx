@@ -17,16 +17,29 @@ interface ResultsPhaseProps {
   submissions: SubmissionPublic[];
   players: PlayerPublic[];
   myPlayerId: string;
+  playerCount: number;
 }
 
-/** Reveal timeline (ms from the start of the results phase). */
-const CARDS_AT = 200;
-const VOTES_AT = 1_200;
+/**
+ * Reveal timeline (ms from the start of the results phase). When there was a
+ * vote, a short "All votes in!" beat plays first so the switch from voting
+ * to results is a moment rather than a jump cut.
+ */
+const BEAT_MS = 1_300;
+const CARDS_AFTER = 200;
+const VOTES_AFTER = 1_200;
 const VOTE_STAGGER = 450;
 const AUTHORS_AFTER = 700;
 const WINNER_AFTER = 600;
 
-export function ResultsPhase({ round, roundCount, submissions, players, myPlayerId }: ResultsPhaseProps) {
+export function ResultsPhase({
+  round,
+  roundCount,
+  submissions,
+  players,
+  myPlayerId,
+  playerCount,
+}: ResultsPhaseProps) {
   const playerMap = Object.fromEntries(players.map((p) => [p.id, p]));
 
   // The phase clock is shared, so every player sees the same reveal timing,
@@ -37,9 +50,16 @@ export function ResultsPhase({ round, roundCount, submissions, players, myPlayer
     : null;
 
   const n = submissions.length;
+  // Voting is skipped with fewer than two entries, so there is no beat to play.
+  const hadVote = n >= 2;
+  const beat = hadVote ? BEAT_MS : 0;
+  const CARDS_AT = beat + CARDS_AFTER;
+  const VOTES_AT = beat + VOTES_AFTER;
   const authorsAt = VOTES_AT + VOTE_STAGGER * Math.max(0, n - 1) + AUTHORS_AFTER;
   const winnerAt = authorsAt + WINNER_AFTER;
   const elapsed = useElapsed(startIso, winnerAt + 500);
+  const showBeat = Boolean(startIso) && hadVote && elapsed < beat;
+  const everyoneVoted = round.vote_count >= playerCount;
 
   const showCards = elapsed >= CARDS_AT || !startIso;
   const showAuthors = elapsed >= authorsAt || !startIso;
@@ -69,6 +89,23 @@ export function ResultsPhase({ round, roundCount, submissions, players, myPlayer
     : winners.length === 1
     ? "Round winner"
     : "No votes this round";
+
+  if (showBeat) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen px-4 text-center">
+        <motion.div
+          initial={{ scale: 0.6, opacity: 0, rotate: -4 }}
+          animate={{ scale: 1, opacity: 1, rotate: 0 }}
+          transition={{ type: "spring", stiffness: 300, damping: 16 }}
+          className="rounded-3xl bg-violet-600 border-2 border-violet-300 px-10 py-8 shadow-2xl shadow-violet-900/60"
+          role="status"
+        >
+          <p className="text-4xl font-black text-white">{everyoneVoted ? "All votes in!" : "Time's up!"}</p>
+          <p className="mt-2 text-violet-100">Let&apos;s see what the crowd thinks…</p>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col min-h-screen px-4 py-6 max-w-2xl mx-auto">

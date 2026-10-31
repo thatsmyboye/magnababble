@@ -1,12 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Centered } from "@/components/ui/centered";
 import { api } from "@/lib/api/client";
-import { storeCredentials } from "@/lib/hooks/useRoom";
+import { readRememberedName, rememberName, storeCredentials } from "@/lib/hooks/useRoom";
 import type { GameState } from "@/lib/game/types";
 
 interface JoinInPlaceProps {
@@ -20,6 +20,12 @@ export function JoinInPlace({ state, onJoined }: JoinInPlaceProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const { room, players } = state;
+
+  useEffect(() => {
+    // Only fill an empty field, so a name typed before the page finished
+    // loading is never overwritten.
+    setName((current) => current || readRememberedName());
+  }, []);
 
   if (room.status !== "lobby") {
     return (
@@ -48,6 +54,7 @@ export function JoinInPlace({ state, onJoined }: JoinInPlaceProps) {
         `/api/rooms/${room.code}/join`,
         { body: { playerName: name.trim() } }
       );
+      rememberName(name);
       storeCredentials(room.code, playerId, playerToken);
       onJoined(playerToken);
     } catch (err) {

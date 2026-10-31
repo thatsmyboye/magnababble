@@ -33,6 +33,11 @@ Games support 2 to 10 players and 1 to 15 rounds. When creating a game the host 
 - Voting shows each player the entries in a different order, so no sentence benefits from going first.
 - Results reveal in a synchronized sequence on every screen: cards, then vote counts from fewest to most, then authors, then the winner. A late refresh lands on the finished state.
 - The final scoreboard is a podium with confetti; the lobby has initials avatars, a QR code for the invite link, and copy or native share buttons.
+- Everything works by tapping. In framed rounds a tapped tile fills the glowing blank. In freestyle, tapping a word in the sentence selects it so it can be moved left or right or removed, and new tiles go after it. Dragging is an optional shortcut: a press-and-hold on touch screens, so an ordinary swipe over the tiles still scrolls the page.
+- A banner says "Reconnecting…" when the network drops and "Back in the game" when it returns; the last good screen stays visible meanwhile.
+- Pasting a full invite link into the code box works, names are remembered between games, and the create form estimates how long the game can run.
+- An "All votes in!" beat plays before each results reveal, and the lobby announces each player who joins.
+- Players can switch animations off in the app, on top of the device's reduced-motion setting.
 
 ## Local setup
 
@@ -93,7 +98,7 @@ app/
     rounds/[id]/            # submit, vote
 
 components/
-  home/                     # CreateRoom, JoinRoom, HeroDemo
+  home/                     # CreateRoom, JoinRoom, QuickJoin, HeroDemo, HowItWorks
   room/                     # Lobby, JoinInPlace, one component per phase, FinalScoreboard
   tiles/                    # Tile, TileHand, SentenceFrame, FrameComposer, FreestyleComposer
   ui/                       # Button, Input, Timer, PlayerList, Avatar, PhaseHeader, Sentence, CountUp

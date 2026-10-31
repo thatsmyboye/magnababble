@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api/client";
 import { ROUND_OPTIONS } from "@/lib/game/engine-constants";
+import { estimateGameMinutes } from "@/lib/game/estimate";
 import { MODE_LABELS, ROOM_MODES, type RoomMode } from "@/lib/game/phases";
-import { storeCredentials } from "@/lib/hooks/useRoom";
+import { readRememberedName, rememberName, storeCredentials } from "@/lib/hooks/useRoom";
 import { cn } from "@/lib/utils";
 
 export function CreateRoom() {
@@ -17,6 +18,12 @@ export function CreateRoom() {
   const [mode, setMode] = useState<RoomMode>("mixed");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    // Only fill an empty field, so a name typed before the page finished
+    // loading is never overwritten.
+    setName((current) => current || readRememberedName());
+  }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -31,6 +38,7 @@ export function CreateRoom() {
         playerToken: string;
       }>("/api/rooms", { body: { hostName: name.trim(), roundCount: rounds, mode } });
 
+      rememberName(name);
       storeCredentials(code, playerId, playerToken);
       router.push(`/room/${code}`);
     } catch (err) {
@@ -42,8 +50,12 @@ export function CreateRoom() {
   return (
     <form onSubmit={handleCreate} className="space-y-4">
       <div>
-        <label className="block text-sm text-white/60 mb-1">Your name</label>
+        <label htmlFor="create-name" className="block text-sm text-white/60 mb-1">
+          Your name
+        </label>
         <Input
+          id="create-name"
+          autoComplete="nickname"
           placeholder="Enter your name"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -71,6 +83,9 @@ export function CreateRoom() {
             </button>
           ))}
         </div>
+        <p className="text-white/40 text-xs mt-1.5" aria-live="polite">
+          Up to about {estimateGameMinutes(rounds, mode)} minutes · rounds end early once everyone is done
+        </p>
       </div>
 
       <div>

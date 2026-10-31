@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotionConfig } from "framer-motion";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api/client";
@@ -26,7 +26,8 @@ const PODIUM = [
 
 export function FinalScoreboard({ code, players, myPlayerId, isHost, token, onReset }: FinalScoreboardProps) {
   const router = useRouter();
-  const reduceMotion = useReducedMotion();
+  // Respects both the device setting and the in-app animations switch.
+  const reduceMotion = useReducedMotionConfig();
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
   const fired = useRef(false);
