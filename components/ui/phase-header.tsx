@@ -1,5 +1,4 @@
 import { Timer, TimerBar } from "@/components/ui/timer";
-import { phaseDurationMs } from "@/lib/game/phases";
 import type { RoundPublic } from "@/lib/game/types";
 
 interface PhaseHeaderProps {
@@ -33,7 +32,7 @@ export function PhaseHeader({ round, roundCount, label, timerLabel }: PhaseHeade
       </div>
       <TimerBar
         endsAt={round.phase_ends_at}
-        durationMs={phaseDurationMs(round.phase, round.freestyle)}
+        durationMs={round.phase_duration_ms}
       />
     </header>
   );

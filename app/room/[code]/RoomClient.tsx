@@ -14,6 +14,7 @@ import { FinalScoreboard } from "@/components/room/FinalScoreboard";
 import { JoinInPlace } from "@/components/room/JoinInPlace";
 import { Centered } from "@/components/ui/centered";
 import { ConnectionBanner } from "@/components/ui/connection-banner";
+import { Reactions } from "@/components/room/Reactions";
 
 interface RoomClientProps {
   code: string;
@@ -21,10 +22,19 @@ interface RoomClientProps {
 
 export function RoomClient({ code }: RoomClientProps) {
   const roomState = useRoom(code);
+  const { state } = roomState;
+  // Reactions belong to the social moments: voting and the results reveal.
+  const reacting =
+    Boolean(state?.me) &&
+    state?.room.status === "playing" &&
+    (state?.round?.phase === "voting" || state?.round?.phase === "results");
   return (
     <>
       <ConnectionBanner connection={roomState.connection} />
-      <RoomView code={code} roomState={roomState} />
+      <div className={reacting ? "pb-24" : undefined}>
+        <RoomView code={code} roomState={roomState} />
+      </div>
+      <Reactions code={code} active={reacting} />
     </>
   );
 }
@@ -88,6 +98,7 @@ function RoomView({ code, roomState }: { code: string; roomState: ReturnType<typ
         myPlayerId={me.id}
         isHost={isHost}
         token={token}
+        recap={state.recap}
         onReset={refresh}
       />
     );
@@ -103,6 +114,7 @@ function RoomView({ code, roomState }: { code: string; roomState: ReturnType<typ
         token={token}
         roundCount={room.round_count}
         mode={room.mode}
+        settings={room.settings}
         onStarted={refresh}
       />
     );

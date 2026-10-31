@@ -7,7 +7,8 @@ import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
-import type { PlayerPublic } from "@/lib/game/types";
+import type { PlayerPublic, Recap } from "@/lib/game/types";
+import { RecapSection } from "@/components/room/RecapSection";
 
 interface FinalScoreboardProps {
   code: string;
@@ -15,6 +16,7 @@ interface FinalScoreboardProps {
   myPlayerId: string;
   isHost: boolean;
   token: string | null;
+  recap: Recap | null;
   onReset: () => void;
 }
 
@@ -24,7 +26,15 @@ const PODIUM = [
   { place: 3, height: "h-14", label: "3rd", tone: "bg-amber-700/30 border-amber-600/50" },
 ];
 
-export function FinalScoreboard({ code, players, myPlayerId, isHost, token, onReset }: FinalScoreboardProps) {
+export function FinalScoreboard({
+  code,
+  players,
+  myPlayerId,
+  isHost,
+  token,
+  recap,
+  onReset,
+}: FinalScoreboardProps) {
   const router = useRouter();
   // Respects both the device setting and the in-app animations switch.
   const reduceMotion = useReducedMotionConfig();
@@ -169,6 +179,8 @@ export function FinalScoreboard({ code, players, myPlayerId, isHost, token, onRe
           ))}
         </motion.ul>
       )}
+
+      {recap && <RecapSection code={code} recap={recap} myPlayerId={myPlayerId} />}
 
       {error && (
         <p role="alert" className="text-red-400 text-sm mb-3">
