@@ -89,6 +89,7 @@ export function SubmissionPhase({
       ) : (
         <FrameComposer
           frame={round.prompt.sentence_frame}
+          hints={round.prompt.slot_hints}
           hand={hand}
           onSubmit={submit}
           submitting={submitting}

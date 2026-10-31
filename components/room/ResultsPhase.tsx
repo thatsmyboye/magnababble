@@ -6,6 +6,7 @@ import { CountUp } from "@/components/ui/count-up";
 import { PlayerList } from "@/components/ui/player-list";
 import { PhaseHeader } from "@/components/ui/phase-header";
 import { Sentence } from "@/components/ui/sentence";
+import { ModifierBadge } from "@/components/ui/modifier-badge";
 import { useElapsed } from "@/lib/hooks/useElapsed";
 import { cn } from "@/lib/utils";
 import type { PlayerPublic, RoundPublic, SubmissionPublic } from "@/lib/game/types";
@@ -127,7 +128,14 @@ export function ResultsPhase({
           {headline}
         </motion.h2>
       </AnimatePresence>
-      <p className="text-white/50 text-sm mb-6">{round.prompt.display_text}</p>
+      <p className="text-white/50 text-sm mb-6">
+        {round.prompt.display_text}
+        {round.modifier === "double" && (
+          <span className="ml-2 align-middle">
+            <ModifierBadge modifier="double" /> <span className="text-yellow-200/80">every vote scores 2</span>
+          </span>
+        )}
+      </p>
 
       {n === 0 && <p className="text-white/30 text-center py-8">Nobody submitted this round.</p>}
 

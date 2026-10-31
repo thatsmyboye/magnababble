@@ -1,4 +1,5 @@
 import { Timer, TimerBar } from "@/components/ui/timer";
+import { ModifierBadge } from "@/components/ui/modifier-badge";
 import type { RoundPublic } from "@/lib/game/types";
 
 interface PhaseHeaderProps {
@@ -18,6 +19,7 @@ export function PhaseHeader({ round, roundCount, label, timerLabel }: PhaseHeade
           </span>
           <span className="text-white/20">·</span>
           <span className="text-violet-300 truncate">{round.prompt.theme}</span>
+          {round.modifier && <ModifierBadge modifier={round.modifier} />}
           {label && (
             <>
               <span className="text-white/20">·</span>
