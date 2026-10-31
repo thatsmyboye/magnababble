@@ -16,6 +16,14 @@ import { nextPhase, phaseDurationMs, phaseEndsAt, type RoomMode, type RoundPhase
 import { countSlots, isFreestyle } from "./scoring";
 import type { RoomSettings } from "./settings";
 import { countPlayers, recordEvent } from "./events";
+import {
+  chooseModifier,
+  effectiveFrame,
+  effectiveHints,
+  isRoundModifier,
+  scoreMultiplier,
+  type RoundModifier,
+} from "./modifiers";
 import type {
   GameState,
   PlayerPublic,
@@ -53,6 +61,8 @@ interface PromptRow {
   display_text: string;
   sentence_frame: string;
   tile_set_id: string | null;
+  slot_hints: string[] | null;
+  family_friendly: boolean;
 }
 
 export interface RoundRow {
@@ -62,6 +72,7 @@ export interface RoundRow {
   phase: RoundPhase;
   phase_ends_at: string | null;
   prompt_id: string;
+  modifier: RoundModifier | null;
   prompts: PromptRow | null;
 }
 
@@ -83,7 +94,7 @@ export class EngineError extends Error {
 
 export const ROOM_COLUMNS = "id, code, status, round_count, current_round, mode, settings";
 const ROUND_COLUMNS =
-  "id, room_id, round_number, phase, phase_ends_at, prompt_id, prompts(id, theme, display_text, sentence_frame, tile_set_id)";
+  "id, room_id, round_number, phase, phase_ends_at, prompt_id, modifier, prompts(id, theme, display_text, sentence_frame, tile_set_id, slot_hints, family_friendly)";
 
 /** PostgREST returns embedded one-to-one rows as objects, but older typings say array. */
 function one<T>(value: T | T[] | null | undefined): T | null {
@@ -163,11 +174,14 @@ export async function pickPrompt(
   rng: () => number = Math.random
 ): Promise<PromptRow> {
   const [{ data: allPrompts }, { data: usedRows }] = await Promise.all([
-    sb.from("prompts").select("id, theme, display_text, sentence_frame, tile_set_id"),
+    sb.from("prompts").select("id, theme, display_text, sentence_frame, tile_set_id, slot_hints, family_friendly"),
     sb.from("rounds").select("prompt_id").eq("room_id", room.id),
   ]);
 
-  const prompts = (allPrompts as PromptRow[] | null) ?? [];
+  // Family-friendly is a hard filter: never relaxed, unlike theme and style.
+  const prompts = ((allPrompts as PromptRow[] | null) ?? []).filter(
+    (p) => !room.settings?.familyFriendly || p.family_friendly !== false
+  );
   if (prompts.length === 0) throw new EngineError("No prompts available", 500);
 
   const used = new Set((usedRows ?? []).map((r) => r.prompt_id as string));
@@ -195,21 +209,35 @@ async function dealHands(
   sb: ServiceClient,
   roundId: string,
   playerIds: string[],
-  prompt: PromptRow
+  prompt: PromptRow,
+  room: RoomRow,
+  modifier: RoundModifier | null
 ): Promise<void> {
-  const { data: tiles } = await sb
-    .from("tiles")
-    .select("id, word, category")
-    .eq("tile_set_id", prompt.tile_set_id ?? DEFAULT_TILE_SET_ID);
+  const themeSetId = prompt.tile_set_id && prompt.tile_set_id !== DEFAULT_TILE_SET_ID ? prompt.tile_set_id : null;
+  const familyOnly = Boolean(room.settings?.familyFriendly);
 
-  const pool = (tiles as DealableTile[] | null) ?? [];
+  // The main set always supplies glue words and fills out themed hands.
+  const loadSet = async (setId: string) => {
+    let query = sb.from("tiles").select("id, word, category").eq("tile_set_id", setId);
+    if (familyOnly) query = query.eq("family_friendly", true);
+    const { data } = await query;
+    return (data as DealableTile[] | null) ?? [];
+  };
+  const [pool, themePool] = await Promise.all([
+    loadSet(DEFAULT_TILE_SET_ID),
+    themeSetId ? loadSet(themeSetId) : Promise.resolve([] as DealableTile[]),
+  ]);
   if (pool.length === 0) throw new EngineError("Tile set is empty", 500);
 
-  const freestyle = isFreestyle(prompt.sentence_frame);
-  const slotCount = countSlots(prompt.sentence_frame);
+  const frame = effectiveFrame(prompt.sentence_frame, modifier);
+  const hints = effectiveHints(prompt.slot_hints, prompt.sentence_frame, modifier);
+  const freestyle = isFreestyle(frame);
+  const slotCount = countSlots(frame);
 
   const inserts = playerIds.flatMap((playerId) => {
-    const hand = freestyle ? dealFreestyleHand(pool) : dealFrameHand(pool, slotCount);
+    const hand = freestyle
+      ? dealFreestyleHand(pool, Math.random, undefined, undefined, themePool)
+      : dealFrameHand(pool, slotCount, Math.random, { hints, themePool });
     return hand.map((tile) => ({ round_id: roundId, player_id: playerId, tile_id: tile.id }));
   });
 
@@ -232,12 +260,31 @@ async function createRound(
   const prompt = await pickPrompt(sb, room, roundNumber);
   const freestyle = isFreestyle(prompt.sentence_frame);
 
+  let previous: RoundModifier | null = null;
+  if (room.settings?.specialRounds && roundNumber > 1) {
+    const { data: prev } = await sb
+      .from("rounds")
+      .select("modifier")
+      .eq("room_id", room.id)
+      .eq("round_number", roundNumber - 1)
+      .maybeSingle();
+    previous = isRoundModifier(prev?.modifier) ? prev.modifier : null;
+  }
+  const modifier = chooseModifier({
+    enabled: Boolean(room.settings?.specialRounds),
+    roundNumber,
+    roundCount: room.round_count,
+    freestyle,
+    previous,
+  });
+
   const { data: round, error } = await sb
     .from("rounds")
     .insert({
       room_id: room.id,
       round_number: roundNumber,
       prompt_id: prompt.id,
+      modifier,
       phase: "prompt",
       phase_ends_at: phaseEndsAt("prompt", freestyle, room.settings),
     })
@@ -251,7 +298,7 @@ async function createRound(
   }
 
   const players = await fetchPlayers(sb, room.id);
-  await dealHands(sb, round.id, players.map((p) => p.id), prompt);
+  await dealHands(sb, round.id, players.map((p) => p.id), prompt, room, modifier);
 
   const { error: roomError } = await sb
     .from("rooms")
@@ -276,8 +323,8 @@ export async function startGame(sb: ServiceClient, room: RoomRow): Promise<{ sta
   return { started: created };
 }
 
-/** Add each submission's votes to its author's score. */
-async function applyRoundScores(sb: ServiceClient, roundId: string): Promise<void> {
+/** Add each submission's votes (times the round's multiplier) to its author's score. */
+async function applyRoundScores(sb: ServiceClient, roundId: string, multiplier = 1): Promise<void> {
   const { data: submissions } = await sb
     .from("submissions")
     .select("player_id, vote_count")
@@ -287,7 +334,7 @@ async function applyRoundScores(sb: ServiceClient, roundId: string): Promise<voi
   for (const sub of submissions ?? []) {
     const { error } = await sb.rpc("increment_score", {
       p_player_id: sub.player_id,
-      p_amount: sub.vote_count,
+      p_amount: sub.vote_count * multiplier,
     });
     if (error) throw error;
   }
@@ -300,11 +347,12 @@ async function casPhase(
   from: RoundPhase,
   to: RoundPhase,
   freestyle: boolean,
-  settings: RoomSettings
+  settings: RoomSettings,
+  modifier: RoundModifier | null = null
 ): Promise<boolean> {
   const { data, error } = await sb
     .from("rounds")
-    .update({ phase: to, phase_ends_at: phaseEndsAt(to, freestyle, settings) })
+    .update({ phase: to, phase_ends_at: phaseEndsAt(to, freestyle, settings, Date.now(), modifier) })
     .eq("id", roundId)
     .eq("phase", from)
     .select("id");
@@ -354,11 +402,11 @@ export async function advanceRoom(
   }
 
   if (target !== null) {
-    const won = await casPhase(sb, round.id, round.phase, target, freestyle, room.settings ?? {});
+    const won = await casPhase(sb, round.id, round.phase, target, freestyle, room.settings ?? {}, round.modifier);
     if (!won) return { status: "stale" };
     if (target === "results") {
       // Scores are applied exactly once, by whoever won the CAS into results.
-      await applyRoundScores(sb, round.id);
+      await applyRoundScores(sb, round.id, scoreMultiplier(round.modifier));
     }
     return { status: "phase_advanced", phase: target };
   }
@@ -547,11 +595,13 @@ export async function buildGameState(
   let myVote: string | null = null;
 
   if (round && round.prompts) {
+    // Players see the round's effective frame: a chaos round has one more blank.
     const prompt: PromptPublic = {
       id: round.prompts.id,
       theme: round.prompts.theme,
       display_text: round.prompts.display_text,
-      sentence_frame: round.prompts.sentence_frame,
+      sentence_frame: effectiveFrame(round.prompts.sentence_frame, round.modifier),
+      slot_hints: effectiveHints(round.prompts.slot_hints, round.prompts.sentence_frame, round.modifier),
     };
 
     const [{ data: subRows }, { count: voteCount }, handRows, voteRow] = await Promise.all([
@@ -615,8 +665,14 @@ export async function buildGameState(
       round_number: round.round_number,
       phase: round.phase,
       phase_ends_at: round.phase_ends_at,
-      phase_duration_ms: phaseDurationMs(round.phase, isFreestyle(prompt.sentence_frame), room.settings),
+      phase_duration_ms: phaseDurationMs(
+        round.phase,
+        isFreestyle(prompt.sentence_frame),
+        room.settings,
+        round.modifier
+      ),
       prompt,
+      modifier: round.modifier ?? null,
       freestyle: isFreestyle(prompt.sentence_frame),
       submission_count: subs.length,
       vote_count: voteCount ?? 0,

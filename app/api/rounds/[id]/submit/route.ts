@@ -7,6 +7,7 @@ import {
   type RoomRow,
 } from "@/lib/game/engine";
 import { placementUsesHand } from "@/lib/game/dealing";
+import { effectiveFrame } from "@/lib/game/modifiers";
 import { countSlots, FREESTYLE_MAX_WORDS, isFreestyle, renderSubmission } from "@/lib/game/scoring";
 import { getServiceClient } from "@/lib/supabase/service";
 import { bearerToken, handleRouteError, jsonError, readJson } from "@/lib/api/helpers";
@@ -37,7 +38,8 @@ export async function POST(
 
     if (round.phase !== "submitting") return jsonError("Submissions are closed for this round");
 
-    const frame = round.prompts.sentence_frame;
+    // Validate against the frame players saw (chaos rounds add a blank).
+    const frame = effectiveFrame(round.prompts.sentence_frame, round.modifier);
     const freestyle = isFreestyle(frame);
     const words = (placement as string[]).map((w) => w.trim());
 

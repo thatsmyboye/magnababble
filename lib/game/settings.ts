@@ -10,6 +10,10 @@ export interface RoomSettings {
   voteSeconds?: number;
   /** Only use prompts from these themes. Empty or missing means all themes. */
   themes?: string[];
+  /** Occasional speed and chaos rounds, and a double-points final round. */
+  specialRounds?: boolean;
+  /** Leave out prompts and tiles flagged as not family-friendly. */
+  familyFriendly?: boolean;
 }
 
 export const DEFAULT_SUBMIT_SECONDS = 60;
@@ -60,6 +64,9 @@ export function sanitizeSettings(input: unknown): RoomSettings {
     if (themes.length > 0) out.themes = themes;
   }
 
+  if (raw.specialRounds === true) out.specialRounds = true;
+  if (raw.familyFriendly === true) out.familyFriendly = true;
+
   return out;
 }
 
@@ -68,6 +75,8 @@ export function describeSettings(settings: RoomSettings | null | undefined): str
   const parts: string[] = [];
   if (settings?.submitSeconds) parts.push(`${settings.submitSeconds}s to write`);
   if (settings?.voteSeconds) parts.push(`${settings.voteSeconds}s to vote`);
+  if (settings?.specialRounds) parts.push("Special rounds");
+  if (settings?.familyFriendly) parts.push("Family-friendly");
   if (settings?.themes?.length) {
     const shown = settings.themes.slice(0, 3).join(", ");
     const more = settings.themes.length > 3 ? ` +${settings.themes.length - 3} more` : "";

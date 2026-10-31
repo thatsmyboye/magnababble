@@ -1,4 +1,5 @@
 import { submitSeconds, voteSeconds, type RoomSettings } from "./settings";
+import { MIN_SPEED_SECONDS, SPEED_FACTOR, type RoundModifier } from "./modifiers";
 
 export type RoomStatus = "lobby" | "playing" | "finished";
 export type RoomMode = "frames" | "freestyle" | "mixed";
@@ -45,9 +46,14 @@ export function nextPhase(current: RoundPhase): RoundPhase | null {
 export function phaseDurationMs(
   phase: RoundPhase,
   freestyle = false,
-  settings?: RoomSettings | null
+  settings?: RoomSettings | null,
+  modifier?: RoundModifier | null
 ): number {
-  if (phase === "submitting") return submitSeconds(settings, freestyle) * 1000;
+  if (phase === "submitting") {
+    const base = submitSeconds(settings, freestyle);
+    const seconds = modifier === "speed" ? Math.max(MIN_SPEED_SECONDS, Math.round(base * SPEED_FACTOR)) : base;
+    return seconds * 1000;
+  }
   if (phase === "voting") return voteSeconds(settings) * 1000;
   return PHASE_DURATIONS_MS[phase];
 }
@@ -56,9 +62,10 @@ export function phaseEndsAt(
   phase: RoundPhase,
   freestyle = false,
   settings?: RoomSettings | null,
-  now = Date.now()
+  now = Date.now(),
+  modifier?: RoundModifier | null
 ): string {
-  return new Date(now + phaseDurationMs(phase, freestyle, settings)).toISOString();
+  return new Date(now + phaseDurationMs(phase, freestyle, settings, modifier)).toISOString();
 }
 
 export function isRoomMode(value: unknown): value is RoomMode {
